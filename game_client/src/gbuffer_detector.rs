@@ -151,6 +151,7 @@ impl GBufferDetector {
             layout: Some(&pipeline_layout),
             module: &shader_module,
             entry_point: "main",
+            compilation_options: Default::default(),
         });
 
         Some(Self {

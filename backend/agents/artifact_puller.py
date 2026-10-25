@@ -88,6 +88,7 @@ def generate_vehicle_skin_texture(
     if exec_mode != "local_fast" and key and key not in ("your_gemini_key", "your_gemini_api_key_here"):
         try:
             from google import genai
+            from PIL import Image
 
             client = genai.Client(api_key=key)
             interaction = client.interactions.create(
@@ -97,15 +98,26 @@ def generate_vehicle_skin_texture(
                     "High contrast trim stripes, weathered armor and anodized metal, 1:1 square."
                 ),
             )
-            for item in getattr(interaction, "outputs", []) or []:
-                if getattr(item, "mime_type", "").startswith("image/"):
-                    raw_bytes = base64.b64decode(item.data)
-                    out_path.write_bytes(raw_bytes)
-                    return {
-                        "skin_name": skin_name,
-                        "local_path": str(out_path),
-                        "url": f"/assets/generated/{project_id}/{skin_name}",
-                    }
+            img_obj = getattr(interaction, "output_image", None)
+            raw_b64 = None
+            if img_obj is not None:
+                raw_b64 = getattr(img_obj, "data", None) or (
+                    img_obj.get("data") if isinstance(img_obj, dict) else None
+                )
+            if not raw_b64:
+                for item in getattr(interaction, "outputs", []) or []:
+                    if getattr(item, "mime_type", "").startswith("image/"):
+                        raw_b64 = item.data
+                        break
+            if raw_b64:
+                raw_bytes = base64.b64decode(raw_b64)
+                with Image.open(io.BytesIO(raw_bytes)) as pil_img:
+                    pil_img.convert("RGBA").resize((256, 256)).save(out_path, format="PNG")
+                return {
+                    "skin_name": skin_name,
+                    "local_path": str(out_path),
+                    "url": f"/assets/generated/{project_id}/{skin_name}",
+                }
         except Exception as exc:
             print(f"[SkinGenerator] {skin_model} fallback triggered ({exc})")
 

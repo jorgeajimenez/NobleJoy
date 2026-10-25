@@ -4,6 +4,10 @@ import json
 import os
 from typing import Any, Dict, List
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from .artifact_puller import (
     GENERATED_ASSETS_DIR,
     generate_theme_soundtrack_wav,
@@ -158,78 +162,93 @@ class LevelArchitectAgent:
 
         goal_x = 38.0 + (level_index - 1) * 8.0
         prompt = (
-            "You are the Level Architect & Robotics Systems Integrator Agent in an autonomous AI game studio.\n"
+            "You are the Level Architect & Robotics Systems Integrator Managed Agent in an autonomous AI game studio.\n"
             f"Studio Directive: {json.dumps(directive)}\n"
             f"Design a 3D street avenue for theme '{theme}' (Level {level_index}) extending along the +X axis from (0, 0, 0) to ({goal_x}, 0, 0).\n"
             "Line both sides of the street (at z = -9.5 and z = +9.5) with theme-appropriate structures (asset_key='building', solid=true).\n"
             f"Place 'spawn_pad' (asset_key='player') at (0, 0.35, 0) and 'data_core' (asset_key='goal') at ({goal_x}, 0.5, 0).\n"
-            "When running inside the Managed Agent Linux sandbox (/workspace):\n"
-            "1. Write `/workspace/level_contract.json` with the 3D street entities.\n"
-            "2. Write `/workspace/rover.urdf` and `/workspace/car_level.xml` (MuJoCo MJCF) for the vehicle/robot.\n"
-            "3. Print ONLY the valid JSON for the LevelContract to stdout.\n"
+            "Do NOT run shell commands — immediately output ONLY the valid JSON object with key 'entities' containing the 3D street entities.\n"
         )
         if seed_blockade:
             prompt += (
-                "\nIMPORTANT FOR FIRST-PASS GENERATION: Place 'blast_door' (asset_key='obstacle', scale=2.6, solid=true) "
+                "\nIMPORTANT FOR FIRST-PASS GENERATION: Include 'blast_door' (asset_key='obstacle', scale=2.6, solid=true) "
                 "directly in the center of the street at (19.0, 1.5, 0.0) so the Visual QA Tester Agent + WGPU Artifact Detector "
                 "visually detects the blockade and shifts it onto the sidewalk (z = 6.5) during the live verification loop."
             )
 
         extracted_sandbox_files: List[str] = []
         parsed_entities: List[Dict[str, Any]] = []
+        managed_env_id: str = ""
 
-        if (
-            self.exec_mode != "local_fast"
-            and self.api_key
-            and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here")
-        ):
-            try:
-                from google import genai
+        from concurrent.futures import ThreadPoolExecutor
 
-                client = genai.Client(api_key=self.api_key)
-                use_remote = self.exec_mode == "managed_agent" or (
-                    self.exec_mode == "auto" and self.use_managed_agent
-                )
-                if use_remote:
-                    interaction = client.interactions.create(
-                        agent=self.managed_agent_id,
-                        agent_config={
-                            "type": self.managed_agent_type,
-                            "model": self.model_id,
-                        },
-                        input=prompt,
-                        environment="remote",
+        def _run_managed_architect() -> tuple[List[Dict[str, Any]], List[str], str]:
+            local_entities: List[Dict[str, Any]] = []
+            local_files: List[str] = []
+            local_env_id = ""
+            if (
+                self.exec_mode != "local_fast"
+                and self.api_key
+                and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here")
+            ):
+                try:
+                    from google import genai
+
+                    client = genai.Client(api_key=self.api_key)
+                    use_remote = self.exec_mode == "managed_agent" or (
+                        self.exec_mode == "auto" and self.use_managed_agent
                     )
-                    env_id = getattr(interaction, "environment_id", None)
-                    extracted_sandbox_files = pull_managed_agent_workspace(
-                        environment_id=env_id,
-                        project_id=project_id,
-                        api_key=self.api_key,
-                    )
-                else:
-                    interaction = client.interactions.create(
-                        model=self.model_id,
-                        input=prompt,
-                        generation_config={"thinking_level": "medium"},
-                    )
-                raw = interaction.output_text.strip()
-                if "```" in raw:
-                    raw = raw.split("```")[1].removeprefix("json").strip()
-                parsed = json.loads(raw)
-                if isinstance(parsed.get("entities"), list) and len(parsed["entities"]) >= 3:
-                    parsed_entities = parsed["entities"]
-            except Exception as exc:
-                print(f"[ArchitectAgent] Fallback triggered ({exc})")
+                    if use_remote:
+                        interaction = client.interactions.create(
+                            agent=self.managed_agent_id,
+                            agent_config={
+                                "type": self.managed_agent_type,
+                                "model": self.model_id,
+                            },
+                            input=prompt,
+                            environment="remote",
+                        )
+                        local_env_id = getattr(interaction, "environment_id", None) or ""
+                        local_files = pull_managed_agent_workspace(
+                            environment_id=local_env_id,
+                            project_id=project_id,
+                            api_key=self.api_key,
+                        )
+                    else:
+                        interaction = client.interactions.create(
+                            model=self.model_id,
+                            input=prompt,
+                            generation_config={"thinking_level": "low"},
+                        )
+                    raw = (getattr(interaction, "output_text", None) or "").strip()
+                    if "```" in raw:
+                        raw = raw.split("```")[1].removeprefix("json").strip()
+                    parsed = json.loads(raw)
+                    if isinstance(parsed.get("entities"), list) and len(parsed["entities"]) >= 3:
+                        local_entities = parsed["entities"]
+                except Exception as exc:
+                    print(f"[ArchitectAgent] Fallback triggered ({exc})")
+            return local_entities, local_files, local_env_id
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            arch_future = pool.submit(_run_managed_architect)
+            skin_future = pool.submit(
+                generate_vehicle_skin_texture,
+                directive.get("skin_prompt", f"GTA street rally rover skin for {theme}"),
+                project_id,
+                "chassis_skin.png",
+                self.api_key,
+            )
+            parsed_entities, extracted_sandbox_files, managed_env_id = arch_future.result()
+            skin_info = skin_future.result()
 
         if not parsed_entities:
             parsed_entities = default_city_street_entities(theme=theme, level_index=level_index)
-
-        skin_info = generate_vehicle_skin_texture(
-            prompt=directive.get("skin_prompt", f"GTA street rally rover skin for {theme}"),
-            project_id=project_id,
-            skin_name="chassis_skin.png",
-            api_key=self.api_key,
-        )
+        else:
+            ids = {e.get("id") for e in parsed_entities if isinstance(e, dict)}
+            for fallback_ent in default_city_street_entities(theme=theme, level_index=level_index):
+                if fallback_ent["id"] not in ids:
+                    parsed_entities.append(fallback_ent)
 
         music_info = generate_theme_soundtrack_wav(
             theme=theme,
@@ -271,6 +290,7 @@ class LevelArchitectAgent:
             "mjcf_url": f"/assets/generated/{project_id}/car_level.xml",
             "urdf_url": f"/assets/generated/{project_id}/rover.urdf",
             "stl_url": f"/assets/generated/{project_id}/{part_id}.stl",
+            "managed_environment_id": managed_env_id,
             "sandbox_files": extracted_sandbox_files + [skin_info["local_path"], music_info["local_path"], stl_path],
             "entities": parsed_entities,
         }

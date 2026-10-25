@@ -1,25 +1,53 @@
 {
+  "simready_catalog_version": "2026.10.SIMREADY_CENTRAL",
   "assets": {
     "player": {
       "model_path": "models/player.glb",
+      "simready_id": "argon_modular_rover_v2",
+      "usd_uri": "omniverse://localhost/NVIDIA/Assets/SimReady/argon_modular_rover_v2/argon_modular_rover_v2.usd",
+      "physics_profile": "FET_003_STANDARD",
+      "semantics_qcode": "Q42889",
+      "materials": "MDL_Core_PBR",
       "primitive_fallback": "capsule",
       "default_scale": 1.0,
       "color_rgb": [0.2, 0.85, 1.0],
-      "description": "Player controlled cybernetic operative spawn point"
+      "description": "SimReady 4-wheel modular rover with M3 faceplate mount and 2-DOF actuator arm"
     },
     "goal": {
       "model_path": "models/goal.glb",
+      "simready_id": "reactor_extraction_beacon_01",
+      "usd_uri": "omniverse://localhost/NVIDIA/Assets/SimReady/reactor_extraction_beacon_01/reactor_extraction_beacon_01.usd",
+      "physics_profile": "FET_003_STANDARD",
+      "semantics_qcode": "Q18944",
+      "materials": "MDL_Emissive_Core",
       "primitive_fallback": "torus_beacon",
       "default_scale": 1.0,
       "color_rgb": [0.1, 1.0, 0.45],
-      "description": "Reactor data core / objective beacon"
+      "description": "SimReady Reactor data core / extraction checkpoint beacon"
     },
     "obstacle": {
       "model_path": "models/obstacle.glb",
+      "simready_id": "armored_blast_door_barricade_01",
+      "usd_uri": "omniverse://localhost/NVIDIA/Assets/SimReady/armored_blast_door_barricade_01/armored_blast_door_barricade_01.usd",
+      "physics_profile": "FET_003_STANDARD",
+      "semantics_qcode": "Q12345",
+      "materials": "MDL_Core",
       "primitive_fallback": "cuboid",
       "default_scale": 2.0,
       "color_rgb": [0.95, 0.25, 0.25],
-      "description": "Heavy industrial blast door or containment wall"
+      "description": "SimReady heavy industrial blast door or street barricade with rigid-body collider"
+    },
+    "building": {
+      "model_path": "models/building.glb",
+      "simready_id": "modular_street_facade_block_01",
+      "usd_uri": "omniverse://localhost/NVIDIA/Assets/SimReady/modular_street_facade_block_01/modular_street_facade_block_01.usd",
+      "physics_profile": "FET_003_STATIC",
+      "semantics_qcode": "Q41176",
+      "materials": "MDL_Architectural_PBR",
+      "primitive_fallback": "cuboid",
+      "default_scale": 3.0,
+      "color_rgb": [0.13, 0.16, 0.23],
+      "description": "SimReady modular street architecture block with static box collider"
     }
   }
 }

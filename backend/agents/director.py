@@ -4,6 +4,10 @@ import json
 import os
 from typing import Any, Dict
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def infer_robot_form(user_prompt: str) -> str:
     """Detect if the user is requesting a Transformers-style MuJoCo robot morphology swap."""
@@ -255,9 +259,9 @@ class StudioDirectorAgent:
                 from google import genai
 
                 client = genai.Client(api_key=self.api_key)
-                use_remote = self.exec_mode == "managed_agent" or (
-                    self.exec_mode == "auto" and self.use_managed_agent
-                )
+                # In "auto" mode, use fast direct model with thinking_level="low" (~3.5s)
+                # while LevelArchitectAgent runs the remote Managed Agent sandbox in parallel.
+                use_remote = self.exec_mode == "managed_agent"
                 if use_remote:
                     interaction = client.interactions.create(
                         agent=self.managed_agent_id,
@@ -274,7 +278,7 @@ class StudioDirectorAgent:
                         input=system_directive,
                         generation_config={"thinking_level": "low"},
                     )
-                raw = interaction.output_text.strip()
+                raw = (getattr(interaction, "output_text", None) or "").strip()
                 if "```" in raw:
                     raw = raw.split("```")[1].removeprefix("json").strip()
                 parsed = json.loads(raw)

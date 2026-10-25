@@ -26,6 +26,12 @@ ENV/
 *.swp
 *.swo
 
+# Runtime generated artifacts & logs
+backend/assets/generated/
+backend/exports/
+backend_studio.log
+game_client/assets/generated/
+
 # NOTE: .reference/ is intentionally tracked in git!
 !/.reference/
 !/.reference/**
