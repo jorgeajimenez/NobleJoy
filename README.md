@@ -1,4 +1,4 @@
-# Argon Game Studio — Autonomous AI Game Studio, MuJoCo Rover Physics & Native Rust Engine
+# Argon Game Studio (NobleJoy) — Autonomous AI Game Studio, MuJoCo Rover Physics & Native Rust Engine
 
 **Target:** Gemini 4 Argon SF Hackathon  
 **Track:** Track 2 — More Dimensions  
@@ -6,27 +6,59 @@
 
 ---
 
-## Overview
+## Team Work Split & Independent Project Guides
 
-**Argon Game Studio** pairs a native **Rust / Bevy 0.14 3D desktop engine (`JORGE`)** with an autonomous **Gemini 4 Argon Managed Agents studio & MuJoCo physics backend (`GRETCHEN`)** to power a physics-aware **Modular Rover Driving Game**:
+We have structured the monorepo so **Gretchen** (`backend/`) and **Jorge** (`game_client/`) can develop and test completely independently or connected together:
 
-1. **Managed Agent Sandbox Artifact Generation & Local Pull (`antigravity-preview-09-2026` + `gemini-4-argon`):**
-   - The Studio Director and Level Architect agents design the driving course, environmental hazards (`low_clearance_gap_40cm`, `blast_door`), and vehicle physics parameters inside their remote Linux microVM (`/workspace`).
-   - Our backend pulls the generated artifacts from the Managed Agent via the **Environments / Files API** (`environment-{env_id}:download?alt=media`) and generates custom vehicle albedo skins (`chassis_skin.png`) via **`gemini-nano-banana-2.1`**.
-   - Returned artifacts include:
-     - **MuJoCo MJCF (`car_level.xml`)** & **ROS/Gazebo URDF (`rover.urdf`)**
-     - **Vehicle Albedo Skins (`chassis_skin.png`)** dynamically downloaded and applied to the 3D rover mesh in Rust/Bevy
-     - **Watertight M3-calibrated 3D Printable STLs (`*.stl`)**, **Hardware Bill of Materials (`BOM.csv`)**, and **MicroPython Firmware (`firmware/main.py`)**
-2. **Real-Time MuJoCo Driving Physics & Robotics Verification Gate:**
-   - The 4-wheel rover (`car_chassis`, `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`, plus 2-DOF actuator mount) is stepped via **MuJoCo** and verified against Gretchen's **Physics Sanity Check**:
-     - **Center-of-Mass (CoM) Footprint Check:** Ensures extended modular arms/payloads do not tip the rover outside its wheelbase polygon.
-     - **Servo Torque Gate ($\tau = r \times F$):** Validates lever-arm load against COTS servo ratings (`SG90` $1.8\text{ kg}\cdot\text{cm}$ vs `MG996R` $11.0\text{ kg}\cdot\text{cm}$).
-3. **Closed Multimodal Visual QA + Physics Hotfix Loop (Track 2):**
-   - The Rust client captures its live 3D viewport frame buffer to PNG and sends it to the **Visual QA Playtester Agent (`gemini-4-argon`)**.
-   - The QA Agent visually detects navigation blockades (like `blast_door`) and physics bottlenecks, dispatching live **JSON transform deltas** and **MuJoCo physics hotfixes** (`motor_torque_nm`, `wheel_friction`) without reloading the game.
+1. **[`backend/README.md`](./backend/README.md) — Gretchen's Autonomous Studio & MuJoCo Physics Service**
+   - Gemini 4 Argon Managed Agents (`antigravity-preview-09-2026`), `gemini-nano-banana-2.1` vehicle skin generator, `/workspace` `.tar` artifact puller, MuJoCo 4-wheel rover simulation (`mujoco_sim.py`), and physical manufacturing exporter (M3 STLs + `rover.urdf` + `BOM.csv` + MicroPython firmware).
+   - Includes standalone test script (`uv run python test_studio_pipeline.py`) and `curl` commands so Gretchen can test everything without compiling Rust.
+2. **[`game_client/README.md`](./game_client/README.md) — Jorge's Native Rust / Bevy 0.14 3D Driving Engine**
+   - Hardware-accelerated 3D rendering on Apple Silicon (`wgpu` Metal), 4-wheel articulated rover + 2-DOF actuator arm, live PBR skin loader, viewport PNG screenshot capture, and HUD telemetry.
+   - Includes **Standalone Offline Preview Mode** so Jorge can run `cargo run` and drive/test immediately even when the Python backend is offline.
 
 ---
 
-## Quick Start
+## Architecture Overview
 
-See [INSTALL_GUIDE.md](./INSTALL_GUIDE.md) and [SPEC.md](./SPEC.md) for full setup and build instructions using `uv` and `cargo`.
+```
+                        GRETCHEN: THE OUTSOURCED STUDIO (BACKEND)
+       ┌────────────────────────────────────────────────────────────────────────┐
+       │                                                                        │
+Client │   [Studio Director Agent (gemini-4-argon)]                             │
+Brief ─┼──► (Scopes track, hazards, MuJoCo physics & M3 reward part)            │
+       │              │                                                         │
+       │              ▼                                                         │
+       │   [Level Architect + Managed Agent (antigravity-preview-09-2026)]      │
+       │   (Builds MJCF/URDF/STLs in /workspace + Nano Banana 2.1 Skin PNG)     │
+       │              │                        │                                │
+       │              ▼                        ▼                                │
+       │      [FastAPI Gateway + MuJoCo Physics Server (mujoco_sim.py)]         │
+       │              ▲                        │                                │
+       │              │                        │                                │
+       │   [Visual QA Tester Agent]            │                                │
+       │   (Reviews viewport PNG + telemetry,  │                                │
+       │    patches obstacles & MuJoCo torque) │                                │
+       └──────────────▲────────────────────────┼────────────────────────────────┘
+                      │                        │
+       Viewport Image │                        │ Level Contract JSON +
+         (PNG stream) │                        │ Skin PNG + MuJoCo Poses
+                      │                        ▼
+       ┌──────────────┴─────────────────────────────────────────────────────────┐
+       │                                                                        │
+       │                    JORGE: CLIENT ENGINE (RUST / BEVY)                  │
+       │                                                                        │
+       │  [Network / Poller] ──► [Scene Parser] ──► [4-Wheel Rover ECS Spawner] │
+       │                                                  │                     │
+       │  [Frame Capture Subsystem] ◄────────────── [Render / Driving Loop]     │
+       │                                                                        │
+       └────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Reference Docs
+- [`.reference/CONCEPT_FOR_HACKATHON.md`](./.reference/CONCEPT_FOR_HACKATHON.md)
+- [`.reference/Gretchen_Brainstorming_Car_Conversation.pdf`](./.reference/Gretchen_Brainstorming_Car_Conversation.pdf)
+- [`.reference/[External] Gemini 4 Argon_ Hackathon Builder Guide.pdf`](./.reference/%5BExternal%5D%20Gemini%204%20Argon_%20Hackathon%20Builder%20Guide.pdf)
+- [`SPEC.md`](./SPEC.md) & [`INSTALL_GUIDE.md`](./INSTALL_GUIDE.md)

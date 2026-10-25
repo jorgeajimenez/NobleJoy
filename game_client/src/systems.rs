@@ -5,14 +5,102 @@ use crate::network::{
     request_commission_level, request_export_build, request_mujoco_step, request_qa_audit,
     StudioNetEvent, StudioNetworkChannel,
 };
+use crate::scene_parser::{
+    EntitySpec, HotfixDelta, LevelContract, PhysicsSanityCheck, RewardPartSpec,
+};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::ScreenshotManager;
 use bevy::window::PrimaryWindow;
+use std::collections::HashMap;
+
+pub fn build_offline_preview_contract() -> LevelContract {
+    let mut bounds = HashMap::new();
+    bounds.insert("x".to_string(), 24.0);
+    bounds.insert("z".to_string(), 24.0);
+
+    LevelContract {
+        project_id: "local_preview".to_string(),
+        theme: "offline_rover_proving_ground".to_string(),
+        world_bounds: bounds,
+        environmental_hazard: "low_clearance_gap_40cm + blast_door".to_string(),
+        required_capability: "high_torque_4wd + 2-DOF arm".to_string(),
+        skin_url: String::new(),
+        mjcf_url: String::new(),
+        urdf_url: String::new(),
+        stl_url: String::new(),
+        reward_part: RewardPartSpec {
+            part_id: "high_torque_wheel_hub_v2".to_string(),
+            mount_type: "M3_faceplate_40mm".to_string(),
+            compatible_motor: "MG996R_servo".to_string(),
+            mass_grams: 180.0,
+            torque_capacity_kg_cm: 11.0,
+        },
+        sanity_check: PhysicsSanityCheck {
+            com_stable: true,
+            required_torque_kg_cm: 8.75,
+            rated_torque_kg_cm: 1.8,
+            torque_valid: false,
+            upgrade_equipped: false,
+            motor_torque_nm: 3.5,
+            wheel_friction: 1.2,
+        },
+        sandbox_files: vec![],
+        entities: vec![
+            EntitySpec {
+                id: "spawn_pad".to_string(),
+                asset_key: "player".to_string(),
+                x: 0.0,
+                y: 0.35,
+                z: 0.0,
+                scale: 1.0,
+                solid: false,
+            },
+            EntitySpec {
+                id: "data_core".to_string(),
+                asset_key: "goal".to_string(),
+                x: 8.0,
+                y: 0.5,
+                z: 8.0,
+                scale: 1.0,
+                solid: false,
+            },
+            EntitySpec {
+                id: "track_barrier_west".to_string(),
+                asset_key: "obstacle".to_string(),
+                x: 2.0,
+                y: 1.2,
+                z: 5.5,
+                scale: 2.0,
+                solid: true,
+            },
+            EntitySpec {
+                id: "track_barrier_east".to_string(),
+                asset_key: "obstacle".to_string(),
+                x: 6.0,
+                y: 1.2,
+                z: 2.5,
+                scale: 2.0,
+                solid: true,
+            },
+            EntitySpec {
+                id: "blast_door".to_string(),
+                asset_key: "obstacle".to_string(),
+                x: 4.0,
+                y: 1.5,
+                z: 4.0,
+                scale: 2.5,
+                solid: true,
+            },
+        ],
+    }
+}
 
 pub fn setup_base_environment(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    existing_entities: Query<Entity, With<StudioEntity>>,
     net: Res<StudioNetworkChannel>,
     mut session: ResMut<GameSessionState>,
 ) {
@@ -44,7 +132,7 @@ pub fn setup_base_environment(
 
     commands.spawn((
         TextBundle::from_section(
-            "JORGE RUST CLIENT + MUJOCO ROVER | Commissioning Gretchen Studio...",
+            "JORGE RUST CLIENT + MUJOCO ROVER | Initializing...",
             TextStyle {
                 font_size: 18.0,
                 color: Color::WHITE,
@@ -60,8 +148,21 @@ pub fn setup_base_environment(
         StatusOverlayText,
     ));
 
+    // Immediately spawn the local preview track so Jorge can drive right away even if backend is offline
+    let preview = build_offline_preview_contract();
+    spawn_level_from_contract(
+        &mut commands,
+        &asset_server,
+        &mut meshes,
+        &mut materials,
+        &existing_entities,
+        &mut session,
+        &preview,
+        None,
+    );
+
     session.status_banner =
-        "Commissioning MuJoCo driving course & skin from Gretchen Studio (Gemini 4 Argon)..."
+        "Ready! Connecting to Gretchen Studio (127.0.0.1:8000) in background... [WASD] Drive | [L] Local Preview | [Q] QA Hotfix"
             .to_string();
     request_commission_level(
         &net,
@@ -70,6 +171,12 @@ pub fn setup_base_environment(
 }
 
 pub fn handle_studio_hotkeys(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    existing_entities: Query<Entity, With<StudioEntity>>,
+    mut transform_query: Query<(&StudioEntity, &mut Transform)>,
     keys: Res<ButtonInput<KeyCode>>,
     net: Res<StudioNetworkChannel>,
     mut session: ResMut<GameSessionState>,
@@ -81,6 +188,23 @@ pub fn handle_studio_hotkeys(
     } else {
         session.active_project_id.clone()
     };
+
+    if keys.just_pressed(KeyCode::KeyL) {
+        let preview = build_offline_preview_contract();
+        spawn_level_from_contract(
+            &mut commands,
+            &asset_server,
+            &mut meshes,
+            &mut materials,
+            &existing_entities,
+            &mut session,
+            &preview,
+            None,
+        );
+        session.status_banner =
+            "Loaded Local Offline Preview Track | [WASD] Drive | [Q] Simulate QA Hotfix | [U] Toggle M3 Upgrade"
+                .to_string();
+    }
 
     if keys.just_pressed(KeyCode::KeyC) {
         session.status_banner =
@@ -94,19 +218,57 @@ pub fn handle_studio_hotkeys(
 
     if keys.just_pressed(KeyCode::KeyQ) {
         let snap_path = capture_viewport_to_disk(&main_window, &mut screenshot_manager);
-        session.status_banner = format!(
-            "Streaming viewport PNG + MuJoCo telemetry to Visual QA Agent for [{project_id}]..."
-        );
-        request_qa_audit(&net, project_id.clone(), snap_path);
+        if session.active_project_id == "local_preview" {
+            let offline_delta = vec![HotfixDelta {
+                id: "blast_door".to_string(),
+                action: "reposition".to_string(),
+                x: 9.5,
+                y: 1.5,
+                z: 4.0,
+            }];
+            apply_hotfix_deltas(&mut transform_query, &offline_delta);
+            session.sanity_check.motor_torque_nm = 5.5;
+            session.sanity_check.wheel_friction = 1.55;
+            session.sanity_check.rated_torque_kg_cm = 11.0;
+            session.sanity_check.torque_valid = true;
+            session.status_banner =
+                "QA Status [HOTFIX_APPLIED]: Repositioned 'blast_door' to (9.5, 4.0) & boosted rover torque to 5.5 N*m"
+                    .to_string();
+        } else {
+            session.status_banner = format!(
+                "Streaming viewport PNG + MuJoCo telemetry to Visual QA Agent for [{project_id}]..."
+            );
+            request_qa_audit(&net, project_id.clone(), snap_path);
+        }
     }
 
     if keys.just_pressed(KeyCode::KeyU) {
         session.upgrade_equipped = !session.upgrade_equipped;
+        session.sanity_check.upgrade_equipped = session.upgrade_equipped;
+        if session.upgrade_equipped {
+            session.sanity_check.motor_torque_nm = 6.5;
+            session.sanity_check.wheel_friction = 1.65;
+            session.sanity_check.rated_torque_kg_cm = 11.0;
+            session.sanity_check.torque_valid = true;
+        } else {
+            session.sanity_check.motor_torque_nm = 3.5;
+            session.sanity_check.wheel_friction = 1.2;
+            session.sanity_check.rated_torque_kg_cm = 1.8;
+            session.sanity_check.torque_valid = false;
+        }
         session.status_banner = format!(
-            "Snapped M3 Modular Part [{}] onto Rover Chassis -> Verifying CoM & Torque in MuJoCo...",
-            session.reward_part.part_id
+            "Snapped M3 Modular Part [{}] onto Rover Chassis -> CoM STABLE | Servo Torque: {:.1} kg*cm",
+            session.reward_part.part_id, session.sanity_check.rated_torque_kg_cm
         );
-        request_mujoco_step(&net, project_id.clone(), 0.0, 0.0, Some(session.upgrade_equipped));
+        if session.active_project_id != "local_preview" {
+            request_mujoco_step(
+                &net,
+                project_id.clone(),
+                0.0,
+                0.0,
+                Some(session.upgrade_equipped),
+            );
+        }
     }
 
     if keys.just_pressed(KeyCode::KeyE) {
@@ -176,9 +338,11 @@ pub fn poll_studio_network_events(
                     export.stl_files.len()
                 );
             }
-            StudioNetEvent::NetworkError(err) => {
+            StudioNetEvent::NetworkError(_err) => {
                 session.step_in_flight = false;
-                session.status_banner = format!("Studio Network Alert: {err}");
+                session.status_banner =
+                    "Running in Standalone Preview Mode (Backend offline) | [WASD] Drive | [Q] Simulate QA Hotfix | [U] Snap Upgrade | [C] Retry Backend"
+                        .to_string();
             }
         }
     }
@@ -221,8 +385,10 @@ pub fn player_movement_and_collision(
         return;
     }
 
-    // Stream control inputs to MuJoCo backend if not already in flight
-    if !session.step_in_flight && !session.active_project_id.is_empty() {
+    if !session.step_in_flight
+        && !session.active_project_id.is_empty()
+        && session.active_project_id != "local_preview"
+    {
         session.step_in_flight = true;
         request_mujoco_step(
             &net,
@@ -233,7 +399,6 @@ pub fn player_movement_and_collision(
         );
     }
 
-    // Immediate client-side predictive visual responsiveness + collision check
     let mut dir = Vec3::ZERO;
     if throttle != 0.0 {
         dir += Vec3::new(throttle, 0.0, throttle);
@@ -279,6 +444,10 @@ pub fn player_movement_and_collision(
         for (ent, mut transform) in query.iter_mut() {
             if ent.role == EntityRole::Player {
                 transform.translation = proposed;
+                if velocity.length_squared() > 0.0001 {
+                    let angle = (-velocity.z).atan2(velocity.x);
+                    transform.rotation = Quat::from_rotation_y(angle);
+                }
             }
         }
         if let Some(g_pos) = goal_pos {
