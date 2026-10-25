@@ -1,0 +1,27 @@
+==================================================
+GBUFFER ARTIFACT DETECTOR - QUICKSTART
+==================================================
+
+1. DIRECTORY STRUCTURE
+   gbuffer_artifact_detector/
+   ├── Cargo.toml
+   ├── artifact_detector.wgsl
+   └── src/
+       └── main.rs
+
+2. LOCAL VERIFICATION
+   Run the harness with the built-in mock failure cases:
+   $ cargo run --release
+   (Exit code 1 is expected: confirms injected Z-fighting/shadow acne caught)
+
+3. ENGINE INTEGRATION
+   In `src/main.rs`:
+   - Replace `depth_mock`, `normal_mock`, `instance_mock`, `shadow_mock` 
+     with raw G-buffer bytes exported from your engine pass.
+   - Set `uniforms.inv_view_proj`, `near_plane`, and `light_dir` to match 
+     the capture frame's camera transform.
+
+4. CI / CD USAGE
+   $ cargo run --release
+   - Exit code 0: Clean frame, proceed.
+   - Exit code 1: Defects detected (parse stdout for pixel coords & instance IDs).

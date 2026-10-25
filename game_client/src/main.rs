@@ -1,5 +1,6 @@
 mod capture;
 mod components;
+mod gbuffer_detector;
 mod level_builder;
 mod network;
 mod scene_parser;
@@ -15,9 +16,11 @@ use systems::{
 
 fn main() {
     App::new()
+        .insert_resource(ClearColor(Color::srgb(0.05, 0.07, 0.12)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Argon Game Studio — Jorge Rust Engine (Bevy 0.14)".to_string(),
+                title: "Argon Game Studio — Generative 3D Street & Vehicle Engine (Bevy 0.14)"
+                    .to_string(),
                 resolution: (1280.0, 720.0).into(),
                 ..default()
             }),

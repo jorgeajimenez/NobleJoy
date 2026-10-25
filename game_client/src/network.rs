@@ -14,6 +14,11 @@ pub enum StudioNetEvent {
         contract: LevelContract,
         local_skin_asset: Option<String>,
     },
+    CommissionFallback {
+        prompt: String,
+        level_index: u32,
+        reason: String,
+    },
     MujocoStepCompleted(MujocoStepResponse),
     QaReportReceived(QaAuditReport),
     BuildExported(ExportBuildResponse),
@@ -40,7 +45,7 @@ impl Default for StudioNetworkChannel {
     }
 }
 
-pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
+pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String, level_index: u32) {
     let tx = net.tx.clone();
     let base_url = net.backend_url.clone();
     let url = format!("{base_url}/api/commission-level");
@@ -49,12 +54,12 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
         let client = reqwest::blocking::Client::new();
         let payload = json!({
             "prompt": prompt,
+            "level_index": level_index,
             "seed_blockade": true
         });
         match client.post(&url).json(&payload).send() {
             Ok(resp) => match resp.json::<LevelContract>() {
                 Ok(contract) => {
-                    // Also download the Managed Agent's generated vehicle skin PNG locally into assets/generated/
                     let mut local_skin_asset = None;
                     if !contract.skin_url.is_empty() {
                         let skin_full_url = format!("{base_url}{}", contract.skin_url);
@@ -78,15 +83,19 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
                     });
                 }
                 Err(err) => {
-                    let _ = tx.send(StudioNetEvent::NetworkError(format!(
-                        "Failed to parse LevelContract: {err}"
-                    )));
+                    let _ = tx.send(StudioNetEvent::CommissionFallback {
+                        prompt,
+                        level_index,
+                        reason: format!("Parse fallback ({err})"),
+                    });
                 }
             },
             Err(err) => {
-                let _ = tx.send(StudioNetEvent::NetworkError(format!(
-                    "Studio backend unreachable ({err})"
-                )));
+                let _ = tx.send(StudioNetEvent::CommissionFallback {
+                    prompt,
+                    level_index,
+                    reason: format!("Offline Studio Engine ({err})"),
+                });
             }
         }
     });
@@ -156,7 +165,7 @@ pub fn request_qa_audit(
             },
             Err(err) => {
                 let _ = tx.send(StudioNetEvent::NetworkError(format!(
-                    "QA endpoint error ({err})"
+                    "QA endpoint offline ({err})"
                 )));
             }
         }

@@ -1,0 +1,12 @@
+# Cargo.toml
+[package]
+name = "gbuffer_artifact_detector"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = "22.0"
+pollster = "0.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+glam = { version = "0.27", features = ["bytemuck"] }
+env_logger = "0.11"

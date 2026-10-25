@@ -1,0 +1,127 @@
+// artifact_detector.wgsl
+struct CameraUniforms {
+    inv_view_proj: mat4x4<f32>, 
+    light_dir: vec4<f32>,       
+    screen_dim: vec2<f32>,      
+    near_plane: f32,            
+    far_plane: f32,             
+};                              
+
+struct DefectRecord {
+    pixel_coord: vec2<u32>,     
+    defect_type: u32,           
+    instance_id_a: u32,         
+    instance_id_b: u32,         
+    metric_val: f32,            
+    _pad0: u32,                 
+    _pad1: u32,                 
+};                              
+
+struct DefectBuffer {
+    counter: atomic<u32>,       
+    _pad: vec3<u32>,            
+    records: array<DefectRecord>,
+};
+
+@group(0) @binding(0) var tex_depth: texture_2d<f32>;
+@group(0) @binding(1) var tex_normal: texture_2d<f32>;
+@group(0) @binding(2) var tex_instance: texture_2d<u32>;
+@group(0) @binding(3) var tex_shadow: texture_2d<f32>;
+@group(0) @binding(4) var<uniform> camera: CameraUniforms;
+@group(0) @binding(5) var<storage, read_write> defects: DefectBuffer;
+
+fn reconstruct_world_pos(coord: vec2<i32>, raw_depth: f32) -> vec3<f32> {
+    let uv = (vec2<f32>(coord) + vec2<f32>(0.5)) / camera.screen_dim;
+    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, (1.0 - uv.y) * 2.0 - 1.0, raw_depth, 1.0);
+    let world_h = camera.inv_view_proj * ndc;
+    return world_h.xyz / world_h.w;
+}
+
+@compute @workgroup_size(16, 16, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let coord = vec2<i32>(global_id.xy);
+    let bounds = vec2<i32>(camera.screen_dim);
+    if (coord.x >= bounds.x - 1 || coord.y >= bounds.y - 1 || coord.x < 1 || coord.y < 1) {
+        return;
+    }
+
+    let center_depth = textureLoad(tex_depth, coord, 0).r;
+    if (center_depth <= 0.00001) { return; } 
+
+    let center_norm = normalize(textureLoad(tex_normal, coord, 0).xyz);
+    let center_inst = textureLoad(tex_instance, coord, 0).r;
+    let center_shadow = textureLoad(tex_shadow, coord, 0).r;
+    let center_world = reconstruct_world_pos(coord, center_depth);
+
+    let linear_depth = camera.near_plane / max(center_depth, 0.00001);
+    let epsilon_coplanar = 0.002 + (0.0005 * linear_depth);
+
+    var z_fight_transitions: u32 = 0u;
+    var alternate_inst: u32 = 0u;
+    var min_coplanar_dist: f32 = 1e6;
+
+    let offsets = array<vec2<i32>, 8>(
+        vec2<i32>(-1, -1), vec2<i32>(0, -1), vec2<i32>(1, -1),
+        vec2<i32>(-1,  0),                   vec2<i32>(1,  0),
+        vec2<i32>(-1,  1), vec2<i32>(0,  1), vec2<i32>(1,  1)
+    );
+
+    var prev_inst = center_inst;
+    var shadow_sum: f32 = center_shadow;
+    var shadow_sq_sum: f32 = center_shadow * center_shadow;
+
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        let neighbor_coord = coord + offsets[i];
+        let n_depth = textureLoad(tex_depth, neighbor_coord, 0).r;
+        let n_norm = normalize(textureLoad(tex_normal, neighbor_coord, 0).xyz);
+        let n_inst = textureLoad(tex_instance, neighbor_coord, 0).r;
+        let n_shadow = textureLoad(tex_shadow, neighbor_coord, 0).r;
+
+        shadow_sum += n_shadow;
+        shadow_sq_sum += (n_shadow * n_shadow);
+
+        if (n_inst != center_inst) {
+            alternate_inst = n_inst;
+            let n_world = reconstruct_world_pos(neighbor_coord, n_depth);
+            
+            if (dot(center_norm, n_norm) >= 0.985) {
+                let plane_dist = abs(dot(n_world - center_world, center_norm));
+                if (plane_dist < epsilon_coplanar) {
+                    min_coplanar_dist = min(min_coplanar_dist, plane_dist);
+                }
+            }
+        }
+
+        if (n_inst != prev_inst) {
+            z_fight_transitions += 1u;
+            prev_inst = n_inst;
+        }
+    }
+
+    if (min_coplanar_dist < epsilon_coplanar && z_fight_transitions >= 4u && alternate_inst != 0u) {
+        let idx = atomicAdd(&defects.counter, 1u);
+        if (idx < 65536u) {
+            defects.records[idx].pixel_coord = global_id.xy;
+            defects.records[idx].defect_type = 1u; 
+            defects.records[idx].instance_id_a = center_inst;
+            defects.records[idx].instance_id_b = alternate_inst;
+            defects.records[idx].metric_val = min_coplanar_dist;
+        }
+        return;
+    }
+
+    let mean_shadow = shadow_sum / 9.0;
+    let variance_shadow = (shadow_sq_sum / 9.0) - (mean_shadow * mean_shadow);
+    let n_dot_l = dot(center_norm, normalize(camera.light_dir.xyz));
+
+    if (variance_shadow > 0.18 && n_dot_l > 0.15) {
+        let idx = atomicAdd(&defects.counter, 1u);
+        if (idx < 65536u) {
+            defects.records[idx].pixel_coord = global_id.xy;
+            defects.records[idx].defect_type = 2u; 
+            defects.records[idx].instance_id_a = center_inst;
+            defects.records[idx].instance_id_b = 0u;
+            defects.records[idx].metric_val = variance_shadow;
+        }
+    }
+}

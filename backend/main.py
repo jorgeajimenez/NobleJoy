@@ -53,6 +53,7 @@ MUJOCO_SESSIONS: Dict[str, MujocoDrivingSession] = {}
 class CommissionRequest(BaseModel):
     prompt: str = "Design an industrial rover test track with a shielded reactor core and high-torque wheel upgrade."
     project_id: Optional[str] = None
+    level_index: int = 1
     seed_blockade: bool = True
 
 
@@ -229,7 +230,11 @@ async def commission_level(req: CommissionRequest) -> Dict[str, Any]:
     project_id = req.project_id or f"job_{uuid.uuid4().hex[:4]}"
     print(f"[Studio Gateway] Commissioning driving level {project_id}: '{req.prompt}'")
 
-    directive = director_agent.scope_brief(req.prompt, project_id=project_id)
+    directive = director_agent.scope_brief(
+        req.prompt,
+        project_id=project_id,
+        level_index=req.level_index,
+    )
     level_contract = architect_agent.build_level_contract(
         directive=directive,
         manifest=ASSET_MANIFEST,

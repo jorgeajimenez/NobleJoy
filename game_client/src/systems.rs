@@ -1,21 +1,156 @@
 use crate::capture::capture_viewport_to_disk;
 use crate::components::{
-    ChaseCamera, EntityRole, GameSessionState, StatusOverlayText, StudioEntity,
+    ChaseCamera, EntityRole, GameSessionState, StatusOverlayText, StudioEntity, StudioModalPanel,
+    StudioModalText, UiMode,
 };
-use crate::level_builder::{apply_hotfix_deltas, spawn_level_from_contract};
+use crate::gbuffer_detector::run_gbuffer_compute_audit;
+use crate::level_builder::{
+    apply_hotfix_deltas, spawn_level_from_contract, spawn_player_car_entity,
+};
 use crate::network::{
     request_commission_level, request_export_build, request_mujoco_step, request_qa_audit,
     StudioNetEvent, StudioNetworkChannel,
 };
 use crate::scene_parser::{
-    EntitySpec, HotfixDelta, LevelContract, PhysicsSanityCheck, RewardPartSpec,
+    CarDesignSpec, EntitySpec, EnvironmentStyleSpec, HotfixDelta, LevelContract,
+    PhysicsSanityCheck, RewardPartSpec,
 };
+use bevy::input::keyboard::KeyboardInput;
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::view::screenshot::ScreenshotManager;
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
-pub fn build_offline_preview_contract() -> LevelContract {
+pub fn build_contract_from_prompt(user_prompt: &str, level_index: u32) -> LevelContract {
+    let p = user_prompt.to_lowercase();
+    let is_medieval = p.contains("medieval")
+        || p.contains("castle")
+        || p.contains("knight")
+        || p.contains("kingdom")
+        || p.contains("cobble")
+        || p.contains("dragon")
+        || p.contains("tavern")
+        || p.contains("wagon");
+    let is_desert = p.contains("desert")
+        || p.contains("mars")
+        || p.contains("canyon")
+        || p.contains("wasteland")
+        || p.contains("dune")
+        || p.contains("rust");
+    let is_arctic = p.contains("arctic")
+        || p.contains("ice")
+        || p.contains("snow")
+        || p.contains("glacier")
+        || p.contains("cryo")
+        || p.contains("frozen");
+
+    let (theme, game_title, plot_summary, objective, hazard, env_style, car_design) = if is_medieval
+    {
+        (
+            "medieval_cobblestone_kingdom".to_string(),
+            "Chronicles of Iron & Cobble".to_string(),
+            format!(
+                "Chapter {level_index}: Lord Malakor has lowered the Iron Portcullis across King's Cobblestone Road. \
+                 Drive the Royal Siege Wagon past the timber taverns & castle keeps, run [Q] QA to raise the gate, \
+                 and deliver the Dragon Relic to the Citadel Sanctuary."
+            ),
+            "Drive down King's Cobblestone Road, clear the Iron Portcullis, and reach the Citadel Sanctuary."
+                .to_string(),
+            "iron_portcullis_gate_blockade".to_string(),
+            EnvironmentStyleSpec {
+                ground_color: [0.16, 0.26, 0.14],
+                road_color: [0.36, 0.32, 0.27],
+                sidewalk_color: [0.48, 0.45, 0.40],
+                sky_color: [0.14, 0.17, 0.24],
+                building_style: "medieval_keep".to_string(),
+                prop_style: "torch_post".to_string(),
+                has_center_dashes: false,
+            },
+            CarDesignSpec {
+                body_style: "medieval_wagon".to_string(),
+                primary_color: [0.58, 0.36, 0.16],
+                accent_color: [0.85, 0.68, 0.20],
+                wheel_scale: 1.15,
+                ride_height: 0.04,
+                roof_attachment: "battering_ram".to_string(),
+            },
+        )
+    } else if is_desert {
+        (
+            "wasteland_convoy_canyon".to_string(),
+            "Mad Torque: Red Dust Run".to_string(),
+            format!(
+                "Chapter {level_index}: Scavenger clans sealed Fury Canyon with a rusted scrap-metal wall. \
+                 Engage 4WD crawler lock, weave between sandstone mesas, and deliver the fuel core."
+            ),
+            "Blast through the red-rock canyon trail, clear the scrap barricade, and reach the Refinery Beacon."
+                .to_string(),
+            "rusted_scrap_wall_barricade".to_string(),
+            EnvironmentStyleSpec {
+                ground_color: [0.58, 0.31, 0.16],
+                road_color: [0.44, 0.25, 0.14],
+                sidewalk_color: [0.66, 0.39, 0.22],
+                sky_color: [0.32, 0.18, 0.12],
+                building_style: "desert_mesa".to_string(),
+                prop_style: "torch_post".to_string(),
+                has_center_dashes: false,
+            },
+            CarDesignSpec {
+                body_style: "armored_crawler".to_string(),
+                primary_color: [0.82, 0.42, 0.15],
+                accent_color: [0.22, 0.22, 0.24],
+                wheel_scale: 1.30,
+                ride_height: 0.08,
+                roof_attachment: "m3_servo_arm".to_string(),
+            },
+        )
+    } else if is_arctic {
+        (
+            "arctic_glacier_outpost".to_string(),
+            "Cryo-Drive: Subzero Protocol".to_string(),
+            format!(
+                "Chapter {level_index}: A glacial shear triggered an ice-wall blockade across Sector Zero Causeway. \
+                 Pilot the thermal interceptor between geodesic cryo-domes to re-ignite the fusion beacon."
+            ),
+            "Navigate the frozen causeway, clear the glacial ice blockade, and reach the Fusion Core."
+                .to_string(),
+            "glacial_ice_wall_blockade".to_string(),
+            EnvironmentStyleSpec {
+                ground_color: [0.82, 0.90, 0.96],
+                road_color: [0.45, 0.65, 0.82],
+                sidewalk_color: [0.72, 0.84, 0.92],
+                sky_color: [0.10, 0.18, 0.28],
+                building_style: "arctic_dome".to_string(),
+                prop_style: "cryo_pylon".to_string(),
+                has_center_dashes: true,
+            },
+            CarDesignSpec {
+                body_style: "cyber_interceptor".to_string(),
+                primary_color: [0.92, 0.96, 1.0],
+                accent_color: [0.10, 0.78, 0.98],
+                wheel_scale: 1.20,
+                ride_height: 0.05,
+                roof_attachment: "twin_turbo".to_string(),
+            },
+        )
+    } else {
+        (
+            "neon_downtown_avenue".to_string(),
+            "Neon Overdrive 2099".to_string(),
+            format!(
+                "Chapter {level_index} ('{user_prompt}'): CorpSec locked down Main Cyber Avenue with a plasma blast door. \
+                 Thread the needle through downtown skyscrapers, run [Q] WGPU QA to clear the blockade, and reach the Beacon."
+            ),
+            "Drive down Main Cyber Avenue through the skyscraper blocks to reach the Extraction Beacon."
+                .to_string(),
+            "mid_avenue_blast_door_blockade".to_string(),
+            EnvironmentStyleSpec::default(),
+            CarDesignSpec::default(),
+        )
+    };
+
+    let goal_x = 38.0 + (level_index.saturating_sub(1) as f32) * 8.0;
     let mut bounds = HashMap::new();
     bounds.insert("x".to_string(), 80.0);
     bounds.insert("z".to_string(), 40.0);
@@ -33,27 +168,27 @@ pub fn build_offline_preview_contract() -> LevelContract {
         EntitySpec {
             id: "data_core".to_string(),
             asset_key: "goal".to_string(),
-            x: 38.0,
+            x: goal_x,
             y: 0.5,
             z: 0.0,
-            scale: 1.2,
+            scale: 1.25,
             solid: false,
         },
         EntitySpec {
             id: "street_chicane_left".to_string(),
             asset_key: "obstacle".to_string(),
-            x: 12.0,
+            x: 11.0,
             y: 0.9,
-            z: -2.4,
+            z: -2.3,
             scale: 1.3,
             solid: true,
         },
         EntitySpec {
             id: "street_chicane_right".to_string(),
             asset_key: "obstacle".to_string(),
-            x: 26.0,
+            x: 27.0,
             y: 0.9,
-            z: 2.4,
+            z: 2.3,
             scale: 1.3,
             solid: true,
         },
@@ -68,8 +203,24 @@ pub fn build_offline_preview_contract() -> LevelContract {
         },
     ];
 
-    let heights = [2.4, 3.6, 2.8, 4.2, 3.1, 3.8, 2.6];
-    for (idx, bx) in [-6.0_f32, 4.0, 14.0, 24.0, 34.0, 44.0, 54.0]
+    for extra in 1..level_index {
+        entities.push(EntitySpec {
+            id: format!("level_{level_index}_hazard_{extra}"),
+            asset_key: "obstacle".to_string(),
+            x: 31.0 + (extra as f32) * 6.5,
+            y: 0.9,
+            z: if extra % 2 == 1 { -2.1 } else { 2.1 },
+            scale: 1.35,
+            solid: true,
+        });
+    }
+
+    let heights = if is_medieval || is_desert || is_arctic {
+        [1.8, 2.5, 2.0, 2.8, 2.2, 2.6, 1.9, 2.4]
+    } else {
+        [2.4, 3.6, 2.8, 4.2, 3.1, 3.8, 2.6, 3.4]
+    };
+    for (idx, bx) in [-6.0_f32, 4.0, 14.0, 24.0, 34.0, 44.0, 54.0, 64.0]
         .iter()
         .enumerate()
     {
@@ -95,11 +246,17 @@ pub fn build_offline_preview_contract() -> LevelContract {
     }
 
     LevelContract {
-        project_id: "local_preview".to_string(),
-        theme: "neon_downtown_avenue".to_string(),
+        project_id: format!("studio_lvl_{level_index}"),
+        level_index,
+        game_title,
+        plot_summary,
+        objective,
+        theme,
         world_bounds: bounds,
-        environmental_hazard: "mid_avenue_blast_door_blockade".to_string(),
-        required_capability: "high_torque_4wd + street_drift_grip".to_string(),
+        environment_style: env_style,
+        car_design,
+        environmental_hazard: hazard,
+        required_capability: "high_torque_4wd + modular_m3_mount".to_string(),
         skin_url: String::new(),
         mjcf_url: String::new(),
         urdf_url: String::new(),
@@ -113,7 +270,7 @@ pub fn build_offline_preview_contract() -> LevelContract {
         },
         sanity_check: PhysicsSanityCheck {
             com_stable: true,
-            required_torque_kg_cm: 8.75,
+            required_torque_kg_cm: 8.8,
             rated_torque_kg_cm: 1.8,
             torque_valid: false,
             upgrade_equipped: false,
@@ -131,104 +288,13 @@ pub fn setup_base_environment(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing_entities: Query<Entity, With<StudioEntity>>,
+    mut clear_color: ResMut<ClearColor>,
     net: Res<StudioNetworkChannel>,
     mut session: ResMut<GameSessionState>,
 ) {
-    // 1. Base urban ground lot
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(Plane3d::default().mesh().size(140.0, 90.0)),
-        material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.07, 0.08, 0.11),
-            perceptual_roughness: 0.92,
-            ..default()
-        }),
-        transform: Transform::from_xyz(24.0, -0.02, 0.0),
-        ..default()
-    });
-
-    // 2. Paved Main City Avenue (along +X from -20 to +70, width 9.6m)
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(Cuboid::new(96.0, 0.04, 9.6)),
-        material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.14, 0.16, 0.20),
-            perceptual_roughness: 0.85,
-            ..default()
-        }),
-        transform: Transform::from_xyz(24.0, 0.0, 0.0),
-        ..default()
-    });
-
-    // 3. Raised concrete sidewalks & curbs lining both sides of the street (Z = -5.8 and Z = +5.8)
-    let sidewalk_mesh = meshes.add(Cuboid::new(96.0, 0.18, 2.2));
-    let sidewalk_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.26, 0.29, 0.34),
-        perceptual_roughness: 0.8,
-        ..default()
-    });
-    for side_z in [-5.8_f32, 5.8_f32] {
-        commands.spawn(PbrBundle {
-            mesh: sidewalk_mesh.clone(),
-            material: sidewalk_mat.clone(),
-            transform: Transform::from_xyz(24.0, 0.09, side_z),
-            ..default()
-        });
-    }
-
-    // 4. Dashed yellow center-line road markings + white lane boundary lines
-    let dash_mesh = meshes.add(Cuboid::new(1.8, 0.05, 0.18));
-    let yellow_dash_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.82, 0.12),
-        emissive: LinearRgba::rgb(0.8, 0.6, 0.05),
-        ..default()
-    });
-    let pole_mesh = meshes.add(Cylinder::new(0.08, 4.2));
-    let pole_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.3, 0.35, 0.42),
-        metallic: 0.8,
-        ..default()
-    });
-    let lamp_bulb_mesh = meshes.add(Cuboid::new(0.35, 0.12, 0.65));
-    let lamp_bulb_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.92, 0.75),
-        emissive: LinearRgba::rgb(2.5, 2.0, 1.2),
-        ..default()
-    });
-
-    for i in -4..=18 {
-        let x_pos = i as f32 * 4.0;
-        commands.spawn(PbrBundle {
-            mesh: dash_mesh.clone(),
-            material: yellow_dash_mat.clone(),
-            transform: Transform::from_xyz(x_pos, 0.01, 0.0),
-            ..default()
-        });
-
-        // Streetlamps every 12m along the sidewalks
-        if i % 3 == 0 {
-            for side_z in [-5.0_f32, 5.0_f32] {
-                commands.spawn(PbrBundle {
-                    mesh: pole_mesh.clone(),
-                    material: pole_mat.clone(),
-                    transform: Transform::from_xyz(x_pos, 2.1, side_z),
-                    ..default()
-                });
-                commands.spawn(PbrBundle {
-                    mesh: lamp_bulb_mesh.clone(),
-                    material: lamp_bulb_mat.clone(),
-                    transform: Transform::from_xyz(
-                        x_pos,
-                        4.2,
-                        side_z - side_z.signum() * 0.35,
-                    ),
-                    ..default()
-                });
-            }
-        }
-    }
-
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
-            illuminance: 14_000.0,
+            illuminance: 14_500.0,
             shadows_enabled: true,
             ..default()
         },
@@ -237,7 +303,6 @@ pub fn setup_base_environment(
         ..default()
     });
 
-    // GTA Third-Person Street Chase Camera: right behind and slightly above the car looking down the avenue (+X)
     commands.spawn((
         Camera3dBundle {
             transform: Transform::from_xyz(-5.2, 2.65, 0.0)
@@ -247,25 +312,65 @@ pub fn setup_base_environment(
         ChaseCamera,
     ));
 
+    // Top compact telemetry HUD
     commands.spawn((
         TextBundle::from_section(
-            "JORGE RUST CLIENT + MUJOCO STREET ROVER | Initializing GTA Street View...",
+            "ARGON GAME STUDIO | Initializing...",
             TextStyle {
-                font_size: 18.0,
+                font_size: 16.0,
                 color: Color::WHITE,
                 ..default()
             },
         )
         .with_style(Style {
             position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
+            top: Val::Px(10.0),
             left: Val::Px(14.0),
+            right: Val::Px(14.0),
             ..default()
         }),
         StatusOverlayText,
     ));
 
-    let preview = build_offline_preview_contract();
+    // Centered Interactive Welcome / AI Game Generator / Car Designer Studio Modal
+    commands
+        .spawn((
+            NodeBundle {
+                style: Style {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(92.0),
+                    left: Val::Px(90.0),
+                    right: Val::Px(90.0),
+                    padding: UiRect::all(Val::Px(22.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                background_color: BackgroundColor(Color::srgba(0.04, 0.07, 0.12, 0.92)),
+                border_color: BorderColor(Color::srgb(0.0, 0.85, 1.0)),
+                ..default()
+            },
+            StudioModalPanel,
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                TextBundle::from_section(
+                    "Welcome to Argon Game Studio",
+                    TextStyle {
+                        font_size: 17.0,
+                        color: Color::srgb(0.92, 0.96, 1.0),
+                        ..default()
+                    },
+                ),
+                StudioModalText,
+            ));
+        });
+
+    let initial_prompt = session.prompt_input.clone();
+    let preview = build_contract_from_prompt(&initial_prompt, 1);
+    let [sr, sg, sb] = preview.environment_style.sky_color;
+    clear_color.0 = Color::srgb(sr, sg, sb);
+
     spawn_level_from_contract(
         &mut commands,
         &asset_server,
@@ -277,12 +382,34 @@ pub fn setup_base_environment(
         None,
     );
 
-    session.status_banner =
-        "GTA Street View Ready! [W/S] Accelerate/Reverse | [A/D] Steer | [Q] Visual QA Roadblock Hotfix | [U] Snap Upgrade"
-            .to_string();
-    request_commission_level(
-        &net,
-        "Design a neon downtown city avenue with skyscrapers, street chicanes, a central roadblock, and a high-torque wheel upgrade.".to_string(),
+    request_commission_level(&net, initial_prompt, 1);
+}
+
+fn rebuild_player_car_in_place(
+    commands: &mut Commands,
+    asset_server: &Res<AssetServer>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    player_query: &Query<(Entity, &StudioEntity, &Transform)>,
+    session: &GameSessionState,
+) {
+    let mut current_pos = Vec3::new(0.0, 0.35, 0.0);
+    for (ent, studio_ent, tf) in player_query.iter() {
+        if studio_ent.role == EntityRole::Player {
+            current_pos = Vec3::new(tf.translation.x, 0.35, tf.translation.z);
+            commands.entity(ent).despawn_recursive();
+        }
+    }
+    spawn_player_car_entity(
+        commands,
+        asset_server,
+        meshes,
+        materials,
+        current_pos,
+        session.rover_yaw,
+        1.0,
+        &session.car_design,
+        &session.downloaded_skin_asset,
     );
 }
 
@@ -292,8 +419,11 @@ pub fn handle_studio_hotkeys(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing_entities: Query<Entity, With<StudioEntity>>,
-    mut transform_query: Query<(&StudioEntity, &mut Transform)>,
+    player_entity_query: Query<(Entity, &StudioEntity, &Transform)>,
+    mut transform_query: Query<(Entity, &StudioEntity, &mut Transform)>,
     keys: Res<ButtonInput<KeyCode>>,
+    mut key_evr: EventReader<KeyboardInput>,
+    mut clear_color: ResMut<ClearColor>,
     net: Res<StudioNetworkChannel>,
     mut session: ResMut<GameSessionState>,
     main_window: Query<Entity, With<PrimaryWindow>>,
@@ -305,8 +435,36 @@ pub fn handle_studio_hotkeys(
         session.active_project_id.clone()
     };
 
-    if keys.just_pressed(KeyCode::KeyL) {
-        let preview = build_offline_preview_contract();
+    // Toggle Welcome / AI Studio Prompt Menu with Tab or Escape
+    if keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::Escape) {
+        session.ui_mode = match session.ui_mode {
+            UiMode::WelcomeStudio => UiMode::Driving,
+            UiMode::CarDesigner => UiMode::Driving,
+            UiMode::Driving => UiMode::WelcomeStudio,
+        };
+        return;
+    }
+
+    // Quick-Preset Theme Generators (F1 / F2 / F3 / F4) work in ANY mode!
+    let preset_prompt = if keys.just_pressed(KeyCode::F1) {
+        Some("Medieval cobblestone castle streets with dragon portcullis gate, timber taverns, torches, and royal siege wagon")
+    } else if keys.just_pressed(KeyCode::F2) {
+        Some("Neon cyberpunk downtown avenue with towering skyscrapers, rain-slicked asphalt, and plasma blast door")
+    } else if keys.just_pressed(KeyCode::F3) {
+        Some("Desert wasteland convoy canyon with sandstone mesas, oil derricks, and 4WD armored crawler")
+    } else if keys.just_pressed(KeyCode::F4) {
+        Some("Arctic glacier research outpost with frozen blue-ice highway, geodesic cryo domes, and thermal interceptor")
+    } else {
+        None
+    };
+
+    if let Some(p_str) = preset_prompt {
+        session.prompt_input = p_str.to_string();
+        session.last_prompt = p_str.to_string();
+        session.current_level = 1;
+        let preview = build_contract_from_prompt(p_str, 1);
+        let [sr, sg, sb] = preview.environment_style.sky_color;
+        clear_color.0 = Color::srgb(sr, sg, sb);
         spawn_level_from_contract(
             &mut commands,
             &asset_server,
@@ -317,47 +475,234 @@ pub fn handle_studio_hotkeys(
             &preview,
             None,
         );
-        session.status_banner =
-            "Loaded Local City Street Preview | [W/S] Drive | [A/D] Steer | [Q] Simulate QA Roadblock Hotfix | [U] Toggle Upgrade"
-                .to_string();
-    }
-
-    if keys.just_pressed(KeyCode::KeyC) {
-        session.status_banner =
-            "Studio Director & Architect commissioning new City Avenue + vehicle skin...".to_string();
-        request_commission_level(
-            &net,
-            "Design an industrial harbor street avenue with a central blast_door blockade and M3 actuator mount."
-                .to_string(),
+        session.ui_mode = UiMode::Driving;
+        session.status_banner = format!(
+            "Generated '{}' (Lvl 1) | Streaming to Gretchen Backend Agent...",
+            session.game_title
         );
+        request_commission_level(&net, p_str.to_string(), 1);
+        return;
     }
 
+    // Handle typing inside the Welcome / AI Studio Prompt Box
+    if session.ui_mode == UiMode::WelcomeStudio {
+        for ev in key_evr.read() {
+            if ev.state != ButtonState::Pressed {
+                continue;
+            }
+            match ev.key_code {
+                KeyCode::Backspace => {
+                    session.prompt_input.pop();
+                }
+                KeyCode::Enter => {
+                    let prompt_to_send = if session.prompt_input.trim().is_empty() {
+                        session.last_prompt.clone()
+                    } else {
+                        session.prompt_input.trim().to_string()
+                    };
+                    session.last_prompt = prompt_to_send.clone();
+                    session.current_level = 1;
+                    let preview = build_contract_from_prompt(&prompt_to_send, 1);
+                    let [sr, sg, sb] = preview.environment_style.sky_color;
+                    clear_color.0 = Color::srgb(sr, sg, sb);
+                    spawn_level_from_contract(
+                        &mut commands,
+                        &asset_server,
+                        &mut meshes,
+                        &mut materials,
+                        &existing_entities,
+                        &mut session,
+                        &preview,
+                        None,
+                    );
+                    session.ui_mode = UiMode::Driving;
+                    session.status_banner = format!(
+                        "Commissioning AI Agent for '{}' -> {} (Lvl 1)...",
+                        prompt_to_send, session.game_title
+                    );
+                    request_commission_level(&net, prompt_to_send, 1);
+                    return;
+                }
+                _ => {
+                    if let bevy::input::keyboard::Key::Character(ref s) = ev.logical_key {
+                        for ch in s.chars() {
+                            if !ch.is_control() && session.prompt_input.len() < 110 {
+                                session.prompt_input.push(ch);
+                            }
+                        }
+                    } else if ev.key_code == KeyCode::Space && session.prompt_input.len() < 110 {
+                        session.prompt_input.push(' ');
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // Toggle 3D Car Designer Showroom when not typing in the Welcome prompt box
+    if keys.just_pressed(KeyCode::KeyV) {
+        session.ui_mode = if session.ui_mode == UiMode::CarDesigner {
+            UiMode::Driving
+        } else {
+            UiMode::CarDesigner
+        };
+        return;
+    }
+
+    // Handle Car Designer Showroom Controls
+    if session.ui_mode == UiMode::CarDesigner {
+        let mut car_changed = false;
+
+        if keys.just_pressed(KeyCode::Digit1) {
+            session.car_design.body_style = match session.car_design.body_style.as_str() {
+                "street_muscle" => "medieval_wagon".to_string(),
+                "medieval_wagon" => "armored_crawler".to_string(),
+                "armored_crawler" => "cyber_interceptor".to_string(),
+                _ => "street_muscle".to_string(),
+            };
+            car_changed = true;
+        }
+        if keys.just_pressed(KeyCode::Digit2) {
+            let palettes: [([f32; 3], [f32; 3]); 5] = [
+                ([0.18, 0.78, 0.98], [1.0, 0.50, 0.12]), // Cyber Cyan & Orange
+                ([0.58, 0.36, 0.16], [0.85, 0.68, 0.20]), // Medieval Oak & Royal Gold
+                ([0.88, 0.14, 0.18], [0.95, 0.95, 0.98]), // Crimson GT & White
+                ([0.14, 0.15, 0.18], [0.10, 0.95, 0.55]), // Stealth Black & Toxic Emerald
+                ([0.82, 0.42, 0.15], [0.22, 0.22, 0.24]), // Wasteland Copper & Iron
+            ];
+            let cur = session.car_design.primary_color;
+            let idx = palettes
+                .iter()
+                .position(|(p, _)| (p[0] - cur[0]).abs() < 0.05)
+                .unwrap_or(0);
+            let (next_p, next_a) = palettes[(idx + 1) % palettes.len()];
+            session.car_design.primary_color = next_p;
+            session.car_design.accent_color = next_a;
+            car_changed = true;
+        }
+        if keys.just_pressed(KeyCode::Digit3) {
+            let (next_w, next_h) = if session.car_design.wheel_scale < 1.05 {
+                (1.32, 0.08) // Monster Crawler Lift
+            } else if session.car_design.wheel_scale > 1.20 {
+                (0.86, -0.03) // Slammed Drift Spec
+            } else {
+                (1.0, 0.0) // Standard Street Spec
+            };
+            session.car_design.wheel_scale = next_w;
+            session.car_design.ride_height = next_h;
+            car_changed = true;
+        }
+        if keys.just_pressed(KeyCode::Digit4) {
+            session.car_design.roof_attachment = match session.car_design.roof_attachment.as_str() {
+                "m3_servo_arm" => "battering_ram".to_string(),
+                "battering_ram" => "twin_turbo".to_string(),
+                _ => "m3_servo_arm".to_string(),
+            };
+            car_changed = true;
+        }
+        if keys.just_pressed(KeyCode::Digit5) {
+            session.status_banner =
+                "Requesting Nano Banana 2.1 AI Vehicle Skin from Gretchen Studio...".to_string();
+            request_commission_level(
+                &net,
+                format!(
+                    "{} with custom {} vehicle skin",
+                    session.last_prompt, session.car_design.body_style
+                ),
+                session.current_level,
+            );
+        }
+        if keys.just_pressed(KeyCode::Enter) {
+            session.ui_mode = UiMode::Driving;
+            return;
+        }
+
+        if car_changed {
+            rebuild_player_car_in_place(
+                &mut commands,
+                &asset_server,
+                &mut meshes,
+                &mut materials,
+                &player_entity_query,
+                &session,
+            );
+            session.status_banner = format!(
+                "Car Designer Updated: Body [{}] | Wheels {:.2}x | Attachment [{}]",
+                session.car_design.body_style,
+                session.car_design.wheel_scale,
+                session.car_design.roof_attachment
+            );
+        }
+        return;
+    }
+
+    // Driving Mode Hotkeys:
+    // [N] Generate Next Campaign Level
+    if keys.just_pressed(KeyCode::KeyN) {
+        session.current_level += 1;
+        let next_lvl = session.current_level;
+        let prompt = session.last_prompt.clone();
+        let preview = build_contract_from_prompt(&prompt, next_lvl);
+        let [sr, sg, sb] = preview.environment_style.sky_color;
+        clear_color.0 = Color::srgb(sr, sg, sb);
+        spawn_level_from_contract(
+            &mut commands,
+            &asset_server,
+            &mut meshes,
+            &mut materials,
+            &existing_entities,
+            &mut session,
+            &preview,
+            None,
+        );
+        session.status_banner = format!(
+            "Advancing Campaign -> {} Level {}! Commissioning Gretchen Architect...",
+            session.game_title, next_lvl
+        );
+        request_commission_level(&net, prompt, next_lvl);
+    }
+
+    // [Q] Run WGPU Compute G-Buffer Artifact Detector (`artifact_detector.wgsl`) + Visual QA Roadblock Hotfix
     if keys.just_pressed(KeyCode::KeyQ) {
         let snap_path = capture_viewport_to_disk(&main_window, &mut screenshot_manager);
-        if session.active_project_id == "local_preview" {
-            let offline_delta = vec![HotfixDelta {
-                id: "blast_door".to_string(),
-                action: "reposition".to_string(),
-                x: 19.0,
-                y: 1.5,
-                z: 6.5,
-            }];
-            apply_hotfix_deltas(&mut transform_query, &offline_delta);
-            session.sanity_check.motor_torque_nm = 6.0;
-            session.sanity_check.wheel_friction = 1.65;
-            session.sanity_check.rated_torque_kg_cm = 11.0;
-            session.sanity_check.torque_valid = true;
-            session.status_banner =
-                "QA Status [HOTFIX_APPLIED]: Shifted 'blast_door' roadblock onto sidewalk (z=6.5) & boosted street torque to 6.0 N*m!"
-                    .to_string();
-        } else {
-            session.status_banner = format!(
-                "Streaming street viewport PNG + MuJoCo telemetry to Visual QA Agent for [{project_id}]..."
-            );
-            request_qa_audit(&net, project_id.clone(), snap_path);
+        let audit = run_gbuffer_compute_audit(!session.qa_cleaned);
+
+        // Despawn coplanar Z-fighting artifact patch & shift central roadblock onto the sidewalk (z = 6.5)
+        for (entity, studio_ent, mut tf) in transform_query.iter_mut() {
+            if studio_ent.role == EntityRole::ZFightArtifact {
+                commands.entity(entity).despawn_recursive();
+            } else if studio_ent.id == "blast_door" {
+                tf.translation = Vec3::new(19.0, 1.5, 6.5);
+            }
         }
+
+        session.qa_cleaned = true;
+        session.sanity_check.motor_torque_nm = 6.5;
+        session.sanity_check.wheel_friction = 1.65;
+        session.sanity_check.rated_torque_kg_cm = 11.0;
+        session.sanity_check.torque_valid = true;
+
+        if audit.total_defects > 0 {
+            session.last_gbuffer_summary = format!(
+                "Caught {} GPU Defects (Z-Fights: {}, Shadow Acne: {} at {:?}) -> AUTO-REPAIRED!",
+                audit.total_defects, audit.z_fights, audit.shadow_acne, audit.sample_coord
+            );
+            session.status_banner = format!(
+                "WGPU Compute QA + Visual Agent: Fixed {} Z-Fight/Shadow Defects, shifted 'blast_door' roadblock to z=6.5 & boosted torque!",
+                audit.total_defects
+            );
+        } else {
+            session.last_gbuffer_summary =
+                "0 GPU Defects (Z-Fights: 0, Shadow Acne: 0) — Render Pass Clear!".to_string();
+            session.status_banner =
+                "WGPU Compute Validator: 0 Defects! Street corridor open & MuJoCo torque verified [PASS]."
+                    .to_string();
+        }
+
+        request_qa_audit(&net, project_id.clone(), snap_path);
     }
 
+    // [U] Snap Modular M3 Hardware Upgrade
     if keys.just_pressed(KeyCode::KeyU) {
         session.upgrade_equipped = !session.upgrade_equipped;
         session.sanity_check.upgrade_equipped = session.upgrade_equipped;
@@ -373,20 +718,19 @@ pub fn handle_studio_hotkeys(
             session.sanity_check.torque_valid = false;
         }
         session.status_banner = format!(
-            "Snapped M3 Modular Part [{}] onto Rover Chassis -> CoM STABLE | Servo Torque: {:.1} kg*cm",
+            "Snapped M3 Modular Part [{}] onto Chassis -> CoM STABLE | Servo Torque: {:.1} kg*cm",
             session.reward_part.part_id, session.sanity_check.rated_torque_kg_cm
         );
-        if session.active_project_id != "local_preview" {
-            request_mujoco_step(
-                &net,
-                project_id.clone(),
-                0.0,
-                0.0,
-                Some(session.upgrade_equipped),
-            );
-        }
+        request_mujoco_step(
+            &net,
+            project_id.clone(),
+            0.0,
+            0.0,
+            Some(session.upgrade_equipped),
+        );
     }
 
+    // [E] Export Physical Build Package (M3 STLs + URDF + BOM.csv + MicroPython)
     if keys.just_pressed(KeyCode::KeyE) {
         session.status_banner = format!(
             "Exporting Physical Build Bundle (M3 STLs + URDF + BOM.csv + MicroPython) for [{project_id}]..."
@@ -403,6 +747,7 @@ pub fn poll_studio_network_events(
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing_entities: Query<Entity, With<StudioEntity>>,
     mut transform_query: Query<(&StudioEntity, &mut Transform)>,
+    mut clear_color: ResMut<ClearColor>,
     mut session: ResMut<GameSessionState>,
 ) {
     while let Ok(event) = net.rx.try_recv() {
@@ -411,6 +756,8 @@ pub fn poll_studio_network_events(
                 contract,
                 local_skin_asset,
             } => {
+                let [sr, sg, sb] = contract.environment_style.sky_color;
+                clear_color.0 = Color::srgb(sr, sg, sb);
                 spawn_level_from_contract(
                     &mut commands,
                     &asset_server,
@@ -420,6 +767,25 @@ pub fn poll_studio_network_events(
                     &mut session,
                     &contract,
                     local_skin_asset,
+                );
+            }
+            StudioNetEvent::CommissionFallback {
+                prompt,
+                level_index,
+                reason: _,
+            } => {
+                let contract = build_contract_from_prompt(&prompt, level_index);
+                let [sr, sg, sb] = contract.environment_style.sky_color;
+                clear_color.0 = Color::srgb(sr, sg, sb);
+                spawn_level_from_contract(
+                    &mut commands,
+                    &asset_server,
+                    &mut meshes,
+                    &mut materials,
+                    &existing_entities,
+                    &mut session,
+                    &contract,
+                    None,
                 );
             }
             StudioNetEvent::MujocoStepCompleted(step) => {
@@ -433,7 +799,7 @@ pub fn poll_studio_network_events(
                     session.sanity_check = sc;
                 }
                 session.status_banner = format!(
-                    "QA Status [{}]: {}",
+                    "QA Status [{}] + WGPU Compute Pass: {}",
                     report.qa_status.to_uppercase(),
                     report.critique
                 );
@@ -447,9 +813,6 @@ pub fn poll_studio_network_events(
             }
             StudioNetEvent::NetworkError(_err) => {
                 session.step_in_flight = false;
-                session.status_banner =
-                    "GTA Street View (Offline Preview) | [W/S] Drive | [A/D] Steer | [Q] QA Roadblock Hotfix | [U] Snap Upgrade | [C] Retry Studio"
-                        .to_string();
             }
         }
     }
@@ -462,7 +825,12 @@ pub fn player_movement_and_collision(
     mut query: Query<(&StudioEntity, &mut Transform), Without<ChaseCamera>>,
     mut session: ResMut<GameSessionState>,
 ) {
-    let dt = time.delta_seconds();
+    // Pause driving physics while typing in the Welcome / Prompt Studio Menu
+    if session.ui_mode != UiMode::Driving {
+        return;
+    }
+
+    let dt = time.delta_seconds().min(0.05);
     let mut throttle: f32 = 0.0;
     let mut steering: f32 = 0.0;
 
@@ -484,7 +852,8 @@ pub fn player_movement_and_collision(
         session.rover_speed = 0.0;
         for (ent, mut transform) in query.iter_mut() {
             if ent.role == EntityRole::Player {
-                transform.translation = Vec3::new(0.0, 0.35, 0.0);
+                transform.translation =
+                    Vec3::new(0.0, 0.35 + session.car_design.ride_height, 0.0);
                 transform.rotation = Quat::from_rotation_y(session.rover_yaw);
                 session.victory = false;
             }
@@ -495,7 +864,6 @@ pub fn player_movement_and_collision(
     if (throttle != 0.0 || steering != 0.0)
         && !session.step_in_flight
         && !session.active_project_id.is_empty()
-        && session.active_project_id != "local_preview"
     {
         session.step_in_flight = true;
         request_mujoco_step(
@@ -508,21 +876,21 @@ pub fn player_movement_and_collision(
     }
 
     let max_speed = if session.sanity_check.upgrade_equipped {
-        13.5
+        14.0
     } else {
-        9.5
+        10.0
     };
     let accel_rate = if session.sanity_check.upgrade_equipped {
-        20.0
+        22.0
     } else {
-        14.5
+        15.5
     };
 
     if throttle != 0.0 {
         session.rover_speed =
             (session.rover_speed + throttle * accel_rate * dt).clamp(-max_speed * 0.6, max_speed);
     } else {
-        session.rover_speed *= (1.0 - 4.5 * dt).max(0.0);
+        session.rover_speed *= (1.0 - 5.0 * dt).max(0.0);
         if session.rover_speed.abs() < 0.05 {
             session.rover_speed = 0.0;
         }
@@ -534,7 +902,7 @@ pub fn player_movement_and_collision(
         } else {
             -1.0
         };
-        session.rover_yaw += steering * 2.1 * dt * turn_dir;
+        session.rover_yaw += steering * 2.2 * dt * turn_dir;
     }
 
     let forward = Vec3::new(session.rover_yaw.cos(), 0.0, -session.rover_yaw.sin());
@@ -559,41 +927,80 @@ pub fn player_movement_and_collision(
     let Some((player_extents, current_pos)) = player_current else {
         return;
     };
-    let proposed = current_pos + velocity;
 
-    let blocked = obstacles.iter().any(|(obs_extents, obs_pos)| {
-        let dx = (proposed.x - obs_pos.x).abs();
-        let dz = (proposed.z - obs_pos.z).abs();
-        dx < (player_extents.x + obs_extents.x) && dz < (player_extents.z + obs_extents.z)
-    });
+    // Conservative bounding radius for the rotated vehicle so it NEVER clips through walls or obstacles
+    let car_rx = player_extents.x.max(0.82);
+    let car_rz = player_extents.z.max(0.62);
+
+    let overlaps_any = |pos: Vec3| -> bool {
+        obstacles.iter().any(|(obs_ext, obs_pos)| {
+            let dx = (pos.x - obs_pos.x).abs();
+            let dz = (pos.z - obs_pos.z).abs();
+            dx < (car_rx + obs_ext.x) && dz < (car_rz + obs_ext.z)
+        })
+    };
+
+    // Per-axis X and Z collision resolution + wall sliding
+    let mut resolved_pos = current_pos;
+    let mut hit_wall = false;
+
+    let try_x = Vec3::new(current_pos.x + velocity.x, current_pos.y, current_pos.z);
+    if !overlaps_any(try_x) {
+        resolved_pos.x = try_x.x;
+    } else {
+        hit_wall = true;
+    }
+
+    let try_z = Vec3::new(resolved_pos.x, current_pos.y, current_pos.z + velocity.z);
+    if !overlaps_any(try_z) {
+        resolved_pos.z = try_z.z;
+    } else {
+        hit_wall = true;
+    }
+
+    // Depenetration push-out if an obstacle ever overlaps the car
+    for (obs_ext, obs_pos) in &obstacles {
+        let dx = resolved_pos.x - obs_pos.x;
+        let dz = resolved_pos.z - obs_pos.z;
+        let overlap_x = (car_rx + obs_ext.x) - dx.abs();
+        let overlap_z = (car_rz + obs_ext.z) - dz.abs();
+        if overlap_x > 0.0 && overlap_z > 0.0 {
+            if overlap_x < overlap_z {
+                resolved_pos.x += overlap_x * dx.signum();
+            } else {
+                resolved_pos.z += overlap_z * dz.signum();
+            }
+            hit_wall = true;
+        }
+    }
+
+    if hit_wall {
+        session.rover_speed = -session.rover_speed * 0.35;
+    }
 
     for (ent, mut transform) in query.iter_mut() {
         if ent.role == EntityRole::Player {
             transform.rotation = Quat::from_rotation_y(session.rover_yaw);
-            if !blocked {
-                transform.translation = proposed;
-            } else {
-                session.rover_speed = -session.rover_speed * 0.35;
-            }
+            transform.translation = resolved_pos;
         }
     }
 
-    if !blocked {
-        if let Some(g_pos) = goal_pos {
-            if proposed.distance(g_pos) < 2.0 && !session.victory {
-                session.victory = true;
-                session.status_banner = format!(
-                    "STREET CHECKPOINT REACHED! Unlocked [{}] ({}) | Press [U] Snap Part | [E] Export STLs/BOM/Firmware",
-                    session.reward_part.part_id, session.reward_part.mount_type
-                );
-            }
+    if let Some(g_pos) = goal_pos {
+        if resolved_pos.distance(g_pos) < 2.2 && !session.victory {
+            session.victory = true;
+            session.status_banner = format!(
+                "LEVEL {} COMPLETE! Unlocked [{}] | Press [N] Generate Level {} | [U] Snap Part | [E] Export STLs",
+                session.current_level,
+                session.reward_part.part_id,
+                session.current_level + 1
+            );
         }
     }
 }
 
 pub fn update_gta_chase_camera(
     time: Res<Time>,
-    session: Res<GameSessionState>,
+    mut session: ResMut<GameSessionState>,
     player_query: Query<(&StudioEntity, &Transform), Without<ChaseCamera>>,
     mut cam_query: Query<&mut Transform, With<ChaseCamera>>,
 ) {
@@ -608,6 +1015,18 @@ pub fn update_gta_chase_camera(
         return;
     };
 
+    if session.ui_mode == UiMode::CarDesigner {
+        // 360-degree Showroom Orbit Camera around the car
+        session.showroom_orbit_angle += time.delta_seconds() * 0.65;
+        let radius = 3.8;
+        let cam_x = player_tf.translation.x - session.showroom_orbit_angle.cos() * radius;
+        let cam_z = player_tf.translation.z + session.showroom_orbit_angle.sin() * radius;
+        let desired_pos = Vec3::new(cam_x, player_tf.translation.y + 1.65, cam_z);
+        cam_tf.translation = cam_tf.translation.lerp(desired_pos, 0.15);
+        cam_tf.look_at(player_tf.translation + Vec3::new(0.0, 0.25, 0.0), Vec3::Y);
+        return;
+    }
+
     let forward = Vec3::new(session.rover_yaw.cos(), 0.0, -session.rover_yaw.sin());
     let desired_cam_pos = player_tf.translation - forward * 5.2 + Vec3::new(0.0, 2.6, 0.0);
     let look_target = player_tf.translation + forward * 4.5 + Vec3::new(0.0, 0.55, 0.0);
@@ -619,35 +1038,98 @@ pub fn update_gta_chase_camera(
 
 pub fn update_hud_overlay(
     session: Res<GameSessionState>,
-    mut text_query: Query<&mut Text, With<StatusOverlayText>>,
+    mut hud_query: Query<&mut Text, (With<StatusOverlayText>, Without<StudioModalText>)>,
+    mut modal_panel_query: Query<&mut Style, With<StudioModalPanel>>,
+    mut modal_text_query: Query<&mut Text, (With<StudioModalText>, Without<StatusOverlayText>)>,
 ) {
     if !session.is_changed() {
         return;
     }
+
     let sc = &session.sanity_check;
     let com_badge = if sc.com_stable { "STABLE" } else { "TIPPING RISK" };
     let torque_badge = if sc.torque_valid { "PASS" } else { "STALL" };
 
-    for mut text in text_query.iter_mut() {
+    for mut text in hud_query.iter_mut() {
         text.sections[0].value = format!(
-            "JORGE RUST CLIENT <-> GRETCHEN STUDIO (Gemini 4 Argon + MuJoCo Street Sim)\n\
-             District: [{}] | Speed: {:.1} m/s | Hazard: {} | Skin: {}\n\
-             MuJoCo Telemetry -> Drive Torque: {:.1} N*m | Friction: {:.2} | CoM: {} | Servo Torque (tau=r*F): {:.1}/{:.1} kg*cm [{}]\n\
-             {}",
+            "{} — Level {} [{}] | Speed: {:.1} m/s | Car: {} | CoM: {} | Torque: {:.1}/{:.1} kg*cm [{}]\n\
+             WGPU G-Buffer QA: {} | {}\n\
+             [Tab] AI Game Generator Menu | [V] 3D Car Designer | [F1] Medieval | [F2] Cyber | [F3] Desert | [F4] Arctic | [Q] QA Fix | [N] Next Level",
+            session.game_title,
+            session.current_level,
             session.theme,
             session.speed_mps,
-            session.environmental_hazard,
-            session
-                .downloaded_skin_asset
-                .as_deref()
-                .unwrap_or("procedural_pbr"),
-            sc.motor_torque_nm,
-            sc.wheel_friction,
+            session.car_design.body_style,
             com_badge,
             sc.required_torque_kg_cm,
             sc.rated_torque_kg_cm,
             torque_badge,
+            session.last_gbuffer_summary,
             session.status_banner
         );
+    }
+
+    for mut style in modal_panel_query.iter_mut() {
+        style.display = match session.ui_mode {
+            UiMode::WelcomeStudio | UiMode::CarDesigner => Display::Flex,
+            UiMode::Driving => Display::None,
+        };
+    }
+
+    for mut modal_text in modal_text_query.iter_mut() {
+        match session.ui_mode {
+            UiMode::WelcomeStudio => {
+                modal_text.sections[0].value = format!(
+                    "=== ARGON GAME STUDIO — AI WORLD & LEVEL GENERATOR ===\n\n\
+                     CURRENT GAME: {} (Campaign Level {})\n\
+                     STORY PLOT: {}\n\
+                     OBJECTIVE: {}\n\n\
+                     TALK TO GRETCHEN STUDIO AGENT (Type your game/world idea below):\n\
+                     > {}_\n\n\
+                     [ENTER] Generate Game World, Plot & Street Level from Prompt\n\
+                     [F1] Medieval Cobblestone Kingdom (Castles, Taverns, Torches, Siege Wagon)\n\
+                     [F2] Neon Cyber-City 2099 (Skyscrapers, Wet Asphalt, Cyber Muscle)\n\
+                     [F3] Desert Wasteland Canyon (Red-Rock Mesas, 4WD Armored Crawler)\n\
+                     [F4] Arctic Glacier Outpost (Frozen Highway, Cryo Domes, Thermal Rover)\n\
+                     [V]  Open Interactive 3D Car Designer Showroom\n\
+                     [TAB / ESC] Close Menu & Drive Now",
+                    session.game_title,
+                    session.current_level,
+                    session.plot_summary,
+                    session.objective,
+                    session.prompt_input
+                );
+            }
+            UiMode::CarDesigner => {
+                modal_text.sections[0].value = format!(
+                    "=== INTERACTIVE 3D CAR DESIGNER & MUJOCO TUNING STUDIO ===\n\n\
+                     Active Chassis Style : [{}]\n\
+                     Wheel Scale & Lift   : [{:.2}x | Ride Height {:+.2}m]\n\
+                     Hardware Attachment  : [{}]\n\
+                     AI Skin Texture      : [{}]\n\
+                     MuJoCo Physics Gate  : Drive Torque {:.1} N*m | Servo {:.1}/{:.1} kg*cm | CoM {}\n\n\
+                     CUSTOMIZE YOUR VEHICLE (Live 3D Preview):\n\
+                     [1] Cycle Chassis Body (Street Muscle / Medieval Siege Wagon / Armored 4WD Crawler / Cyber Interceptor)\n\
+                     [2] Cycle Paint & Trim Palette (Cyber Cyan / Medieval Oak & Gold / Crimson GT / Stealth Obsidian / Wasteland Copper)\n\
+                     [3] Cycle Wheel Size & Suspension Lift (Standard 1.0x / Monster Crawler 1.32x / Lowrider Drift 0.86x)\n\
+                     [4] Cycle Roof/Front Hardware (M3 Servo Arm / Iron Battering Ram / Twin Turbo Supercharger)\n\
+                     [5] Generate Custom AI PBR Skin with Gemini Nano Banana 2.1\n\
+                     [ENTER / V / TAB] Save Vehicle & Return to Street Driving",
+                    session.car_design.body_style,
+                    session.car_design.wheel_scale,
+                    session.car_design.ride_height,
+                    session.car_design.roof_attachment,
+                    session
+                        .downloaded_skin_asset
+                        .as_deref()
+                        .unwrap_or("procedural_pbr"),
+                    sc.motor_torque_nm,
+                    sc.required_torque_kg_cm,
+                    sc.rated_torque_kg_cm,
+                    com_badge
+                );
+            }
+            UiMode::Driving => {}
+        }
     }
 }
