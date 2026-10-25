@@ -1,4 +1,4 @@
-# Argon Game Studio — Autonomous AI Game Studio & Native Rust Engine
+# Argon Game Studio — Autonomous AI Game Studio, MuJoCo Rover Physics & Native Rust Engine
 
 **Target:** Gemini 4 Argon SF Hackathon  
 **Track:** Track 2 — More Dimensions  
@@ -8,54 +8,25 @@
 
 ## Overview
 
-Instead of hardcoding game logic or relying on blind procedural noise, **Argon Game Studio** treats **Gemini 4 Argon Managed Agents (`antigravity-preview-09-2026`)** as an **autonomous external game development studio**.
+**Argon Game Studio** pairs a native **Rust / Bevy 0.14 3D desktop engine (`JORGE`)** with an autonomous **Gemini 4 Argon Managed Agents studio & MuJoCo physics backend (`GRETCHEN`)** to power a physics-aware **Modular Rover Driving Game**:
 
-- **JORGE (`game_client/` — Rust / Bevy Desktop Engine):** A high-performance native desktop client built in Rust + Bevy 0.14. Handles 3D PBR rendering, player collision physics, spatial input, and real-time viewport frame capture, outsourcing all level design, asset staging, and QA verification to the studio.
-- **GRETCHEN (`backend/` — Gemini 4 Argon Managed Agents Studio):** An autonomous multi-agent backend powered by the `google-genai` Interactions API (`gemini-4-argon` & `antigravity-preview-09-2026`):
-  1. **Studio Director Agent (`director.py`):** Scopes the user's brief, enforces pacing, aesthetic themes, and game objectives.
-  2. **Level Architect Agent (`architect.py`):** Calculates procedural spatial layouts, world coordinate bounds, and entity definitions.
-  3. **Visual QA / Playtester Agent (`qa_tester.py`):** Inspects raw viewport PNG frames streamed from the Rust engine, audits the 3D scene for navigation blockers or balance issues, and dispatches live hotfix transform deltas back to the engine without reloading.
-
----
-
-## Architecture
-
-```
-                        GRETCHEN: THE OUTSOURCED STUDIO (BACKEND)
-       ┌────────────────────────────────────────────────────────────────────────┐
-       │                                                                        │
-Client │   [Studio Director Agent]                                              │
-Brief ─┼──► (Scopes brief & theme)                                              │
-       │              │                                                         │
-       │              ▼                                                         │
-       │   [Level Architect Agent]                                              │
-       │   (Drafts spatial graph) ──► [Asset Pipeline]                          │
-       │              │                        │                                │
-       │              ▼                        ▼                                │
-       │      [API Gateway: Work Order JSON Dispatcher]                         │
-       │              ▲                        │                                │
-       │              │                        │                                │
-       │   [Visual QA Tester Agent]            │                                │
-       │   (Reviews frame captures,            │                                │
-       │    issues hotfix patches)             │                                │
-       └──────────────▲────────────────────────┼────────────────────────────────┘
-                      │                        │
-       Viewport Image │                        │ Scene Contract JSON /
-         (PNG stream) │                        │ Transform Deltas
-                      │                        ▼
-       ┌──────────────┴─────────────────────────────────────────────────────────┐
-       │                                                                        │
-       │                    JORGE: CLIENT ENGINE (RUST)                         │
-       │                                                                        │
-       │  [Network / Poller] ──► [Scene Parser] ──► [ECS Spawner]               │
-       │                                                  │                     │
-       │  [Frame Capture Subsystem] ◄────────────── [Render / Gameplay]         │
-       │                                                                        │
-       └────────────────────────────────────────────────────────────────────────┘
-```
+1. **Managed Agent Sandbox Artifact Generation & Local Pull (`antigravity-preview-09-2026` + `gemini-4-argon`):**
+   - The Studio Director and Level Architect agents design the driving course, environmental hazards (`low_clearance_gap_40cm`, `blast_door`), and vehicle physics parameters inside their remote Linux microVM (`/workspace`).
+   - Our backend pulls the generated artifacts from the Managed Agent via the **Environments / Files API** (`environment-{env_id}:download?alt=media`) and generates custom vehicle albedo skins (`chassis_skin.png`) via **`gemini-nano-banana-2.1`**.
+   - Returned artifacts include:
+     - **MuJoCo MJCF (`car_level.xml`)** & **ROS/Gazebo URDF (`rover.urdf`)**
+     - **Vehicle Albedo Skins (`chassis_skin.png`)** dynamically downloaded and applied to the 3D rover mesh in Rust/Bevy
+     - **Watertight M3-calibrated 3D Printable STLs (`*.stl`)**, **Hardware Bill of Materials (`BOM.csv`)**, and **MicroPython Firmware (`firmware/main.py`)**
+2. **Real-Time MuJoCo Driving Physics & Robotics Verification Gate:**
+   - The 4-wheel rover (`car_chassis`, `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`, plus 2-DOF actuator mount) is stepped via **MuJoCo** and verified against Gretchen's **Physics Sanity Check**:
+     - **Center-of-Mass (CoM) Footprint Check:** Ensures extended modular arms/payloads do not tip the rover outside its wheelbase polygon.
+     - **Servo Torque Gate ($\tau = r \times F$):** Validates lever-arm load against COTS servo ratings (`SG90` $1.8\text{ kg}\cdot\text{cm}$ vs `MG996R` $11.0\text{ kg}\cdot\text{cm}$).
+3. **Closed Multimodal Visual QA + Physics Hotfix Loop (Track 2):**
+   - The Rust client captures its live 3D viewport frame buffer to PNG and sends it to the **Visual QA Playtester Agent (`gemini-4-argon`)**.
+   - The QA Agent visually detects navigation blockades (like `blast_door`) and physics bottlenecks, dispatching live **JSON transform deltas** and **MuJoCo physics hotfixes** (`motor_torque_nm`, `wheel_friction`) without reloading the game.
 
 ---
 
 ## Quick Start
 
-See [INSTALL_GUIDE.md](./INSTALL_GUIDE.md) for full setup and build instructions using `uv` (for Python) and `cargo` (for Rust).
+See [INSTALL_GUIDE.md](./INSTALL_GUIDE.md) and [SPEC.md](./SPEC.md) for full setup and build instructions using `uv` and `cargo`.

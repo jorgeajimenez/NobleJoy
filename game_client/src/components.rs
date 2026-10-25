@@ -1,3 +1,4 @@
+use crate::scene_parser::{PhysicsSanityCheck, RewardPartSpec};
 use bevy::prelude::*;
 
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,14 @@ pub struct StatusOverlayText;
 pub struct GameSessionState {
     pub active_project_id: String,
     pub theme: String,
+    pub environmental_hazard: String,
+    pub reward_part: RewardPartSpec,
+    pub sanity_check: PhysicsSanityCheck,
+    pub speed_mps: f32,
+    pub mujoco_engine: String,
+    pub downloaded_skin_asset: Option<String>,
     pub status_banner: String,
     pub victory: bool,
+    pub upgrade_equipped: bool,
+    pub step_in_flight: bool,
 }

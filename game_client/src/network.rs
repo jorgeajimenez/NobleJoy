@@ -1,4 +1,6 @@
-use crate::scene_parser::{LevelContract, QaAuditReport};
+use crate::scene_parser::{
+    ExportBuildResponse, LevelContract, MujocoStepResponse, QaAuditReport,
+};
 use bevy::prelude::*;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde_json::json;
@@ -8,8 +10,13 @@ use std::thread;
 
 #[derive(Debug, Clone)]
 pub enum StudioNetEvent {
-    LevelCommissioned(LevelContract),
+    LevelCommissioned {
+        contract: LevelContract,
+        local_skin_asset: Option<String>,
+    },
+    MujocoStepCompleted(MujocoStepResponse),
     QaReportReceived(QaAuditReport),
+    BuildExported(ExportBuildResponse),
     NetworkError(String),
 }
 
@@ -35,7 +42,8 @@ impl Default for StudioNetworkChannel {
 
 pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
     let tx = net.tx.clone();
-    let url = format!("{}/api/commission-level", net.backend_url);
+    let base_url = net.backend_url.clone();
+    let url = format!("{base_url}/api/commission-level");
 
     thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
@@ -46,7 +54,28 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
         match client.post(&url).json(&payload).send() {
             Ok(resp) => match resp.json::<LevelContract>() {
                 Ok(contract) => {
-                    let _ = tx.send(StudioNetEvent::LevelCommissioned(contract));
+                    // Also download the Managed Agent's generated vehicle skin PNG locally into assets/generated/
+                    let mut local_skin_asset = None;
+                    if !contract.skin_url.is_empty() {
+                        let skin_full_url = format!("{base_url}{}", contract.skin_url);
+                        if let Ok(img_resp) = client.get(&skin_full_url).send() {
+                            if let Ok(bytes) = img_resp.bytes() {
+                                let asset_rel =
+                                    format!("generated/{}_skin.png", contract.project_id);
+                                let disk_path = Path::new("assets").join(&asset_rel);
+                                if let Some(parent) = disk_path.parent() {
+                                    let _ = fs::create_dir_all(parent);
+                                }
+                                if fs::write(&disk_path, &bytes).is_ok() {
+                                    local_skin_asset = Some(asset_rel);
+                                }
+                            }
+                        }
+                    }
+                    let _ = tx.send(StudioNetEvent::LevelCommissioned {
+                        contract,
+                        local_skin_asset,
+                    });
                 }
                 Err(err) => {
                     let _ = tx.send(StudioNetEvent::NetworkError(format!(
@@ -58,6 +87,32 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String) {
                 let _ = tx.send(StudioNetEvent::NetworkError(format!(
                     "Studio backend unreachable ({err})"
                 )));
+            }
+        }
+    });
+}
+
+pub fn request_mujoco_step(
+    net: &StudioNetworkChannel,
+    project_id: String,
+    throttle: f32,
+    steering: f32,
+    equip_upgrade: Option<bool>,
+) {
+    let tx = net.tx.clone();
+    let url = format!("{}/api/physics-step", net.backend_url);
+
+    thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let payload = json!({
+            "project_id": project_id,
+            "throttle": throttle,
+            "steering": steering,
+            "equip_upgrade": equip_upgrade,
+        });
+        if let Ok(resp) = client.post(&url).json(&payload).send() {
+            if let Ok(step_data) = resp.json::<MujocoStepResponse>() {
+                let _ = tx.send(StudioNetEvent::MujocoStepCompleted(step_data));
             }
         }
     });
@@ -102,6 +157,33 @@ pub fn request_qa_audit(
             Err(err) => {
                 let _ = tx.send(StudioNetEvent::NetworkError(format!(
                     "QA endpoint error ({err})"
+                )));
+            }
+        }
+    });
+}
+
+pub fn request_export_build(net: &StudioNetworkChannel, project_id: String) {
+    let tx = net.tx.clone();
+    let url = format!("{}/api/export-build", net.backend_url);
+
+    thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let payload = json!({ "project_id": project_id });
+        match client.post(&url).json(&payload).send() {
+            Ok(resp) => match resp.json::<ExportBuildResponse>() {
+                Ok(export_info) => {
+                    let _ = tx.send(StudioNetEvent::BuildExported(export_info));
+                }
+                Err(err) => {
+                    let _ = tx.send(StudioNetEvent::NetworkError(format!(
+                        "Export parse error: {err}"
+                    )));
+                }
+            },
+            Err(err) => {
+                let _ = tx.send(StudioNetEvent::NetworkError(format!(
+                    "Export endpoint error ({err})"
                 )));
             }
         }

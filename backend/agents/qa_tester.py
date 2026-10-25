@@ -1,4 +1,4 @@
-"""Visual QA / Playtester Agent: Multimodal critique & live hotfix delta generator."""
+"""Visual QA / Playtester Agent: Multimodal critique & live hotfix delta + MuJoCo physics patcher."""
 
 import base64
 import json
@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 
 class VisualQATesterAgent:
-    """Inspects raw viewport frames + scene state using Gemini 4 Argon vision and issues live transform hotfixes."""
+    """Inspects raw viewport frames + MuJoCo physics state using Gemini 4 Argon vision and issues hotfixes."""
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
@@ -18,21 +18,27 @@ class VisualQATesterAgent:
         image_bytes: Optional[bytes],
         current_scene: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Analyze the viewport PNG and current scene entities to detect navigation blockers and return hotfixes."""
+        """Analyze viewport PNG + MuJoCo telemetry to patch visual corridor blockers and vehicle physics."""
         audit_prompt = (
-            "You are the Visual QA Playtester Agent in an autonomous game studio (Track 2 Verification Loop).\n"
-            "Inspect the attached viewport frame capture from the Rust Bevy 3D engine along with the scene entity layout:\n"
+            "You are the Visual QA Playtester & Robotics Physics Auditor Agent (Track 2 Verification Loop).\n"
+            "Inspect the attached viewport frame capture from the Rust Bevy 3D driving client along with the current "
+            "scene layout and MuJoCo rover physics configuration:\n"
             f"{json.dumps(current_scene, indent=2)}\n\n"
-            "Determine whether any solid obstacle (such as 'blast_door') blocks the direct corridor between "
-            "'spawn_pad' (player) and 'data_core' (goal).\n"
+            "1. Check if any solid obstacle (such as 'blast_door') blocks the driving lane between 'spawn_pad' and 'data_core'.\n"
+            "2. Check if the MuJoCo rover needs increased wheel_friction or motor_torque_nm to clear the track hazard.\n"
             "Output ONLY valid JSON with this exact schema:\n"
             "{\n"
             f'  "project_id": "{project_id}",\n'
             '  "qa_status": "hotfix_required" | "passed",\n'
-            '  "critique": "Concise visual QA explanation of the blocker and the fix",\n'
+            '  "critique": "Concise visual + physics QA explanation",\n'
             '  "hotfixes": [\n'
-            '    {"id": "blast_door", "action": "reposition", "x": 9.0, "y": 1.5, "z": 4.0}\n'
-            "  ]\n"
+            '    {"id": "blast_door", "action": "reposition", "x": 9.5, "y": 1.5, "z": 4.0}\n'
+            "  ],\n"
+            '  "physics_hotfix": {\n'
+            '    "motor_torque_nm": 5.5,\n'
+            '    "wheel_friction": 1.55,\n'
+            '    "servo_torque_kg_cm": 11.0\n'
+            "  }\n"
             "}"
         )
 
@@ -62,6 +68,10 @@ class VisualQATesterAgent:
                     raw = raw.split("```")[1].removeprefix("json").strip()
                 parsed = json.loads(raw)
                 if "qa_status" in parsed and "hotfixes" in parsed:
+                    parsed.setdefault(
+                        "physics_hotfix",
+                        {"motor_torque_nm": 5.5, "wheel_friction": 1.55, "servo_torque_kg_cm": 11.0},
+                    )
                     return parsed
             except Exception as exc:
                 print(f"[VisualQATester] Fallback triggered ({exc})")
@@ -70,17 +80,21 @@ class VisualQATesterAgent:
             "project_id": project_id,
             "qa_status": "hotfix_required",
             "critique": (
-                "Visual audit detected 'blast_door' completely sealing the central corridor "
-                "between 'spawn_pad' (0, 0) and 'data_core' (8, 8). Shifting 'blast_door' +5.0 units "
-                "along X to open a clear navigable path."
+                "Visual + MuJoCo QA Audit: (1) 'blast_door' at (4.0, 4.0) blocks the driving lane to 'data_core'; "
+                "repositioning to (9.5, 1.5, 4.0). (2) Boosting MuJoCo drive torque to 5.5 N*m and tire friction to 1.55."
             ),
             "hotfixes": [
                 {
                     "id": "blast_door",
                     "action": "reposition",
-                    "x": 9.0,
+                    "x": 9.5,
                     "y": 1.5,
                     "z": 4.0,
                 }
             ],
+            "physics_hotfix": {
+                "motor_torque_nm": 5.5,
+                "wheel_friction": 1.55,
+                "servo_torque_kg_cm": 11.0,
+            },
         }

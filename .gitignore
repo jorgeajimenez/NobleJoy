@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.git_initialize.sh
 
 # Python / uv
 __pycache__/

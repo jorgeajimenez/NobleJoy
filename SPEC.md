@@ -1,57 +1,29 @@
-# Technical Specification: Argon Game Studio
+# Technical Specification: Argon Game Studio (MuJoCo Driving & Modular Rover Edition)
 
-## 1. Studio Data Contracts
+## 1. Unified Architecture (Incorporating Gretchen's Brainstorming Notes)
 
-### A. Level Contract (`POST /api/commission-level`)
+1. **GRETCHEN (`backend/` — Autonomous Studio & MuJoCo Physics Server):**
+   - **Studio Director Agent (`director.py`):** Uses `gemini-4-argon` / Managed Agent `antigravity-preview-09-2026` to scope the driving track theme, environmental hazard (`low_clearance_gap_40cm`, `blast_door_blockade`), MuJoCo vehicle parameters (`chassis_mass_kg`, `wheel_friction`, `motor_torque_nm`), and the unlockable COTS modular reward part (`high_torque_wheel_hub_v2` with `M3_faceplate_40mm` mount).
+   - **Level Architect & Artifact Puller (`architect.py`, `artifact_puller.py`, `mujoco_builder.py`):**
+     - Invokes the Managed Agent sandbox (`/workspace`) and pulls generated files to the local machine via the **Environments / Files API**:
+       `GET https://generativelanguage.googleapis.com/v1beta/files/environment-{env_id}:download?alt=media`
+     - Generates the rover's custom UV/albedo skin texture (`chassis_skin.png`) using `gemini-nano-banana-2.1` and serves it over HTTP (`/assets/generated/{project_id}/chassis_skin.png`) to the Rust engine.
+     - Emits the MuJoCo XML model (`car_level.xml`), ROS/Gazebo URDF (`rover.urdf`), and M3-calibrated watertight STL mesh (`high_torque_wheel_hub_v2.stl`).
+   - **MuJoCo Physics & Verification Gate (`mujoco_sim.py`):**
+     - Steps the 4-wheel rover (`car_chassis`, `wheel_fl`, `wheel_fr`, `wheel_rl`, `wheel_rr`) in MuJoCo (`POST /api/physics-step`).
+     - Runs Gretchen's **Physics Sanity Check**:
+       - **Center-of-Mass (CoM) Equilibrium:** Verifies the combined CoM stays inside the wheelbase polygon when modular arms/parts are mounted.
+       - **Torque Validation ($\tau = r \times F$):** Compares lever arm load against rated servo torque (`SG90` = $1.8\text{ kg}\cdot\text{cm}$ vs `MG996R` upgrade = $11.0\text{ kg}\cdot\text{cm}$).
+   - **Visual QA Playtester (`qa_tester.py`):**
+     - Multimodal verification loop (`POST /api/qa-audit`) inspecting raw PNG viewport frames from the Rust engine + MuJoCo telemetry, issuing both **spatial transform deltas** (moving `blast_door`) and **live MuJoCo physics hotfixes** (boosting `motor_torque_nm` and `wheel_friction`).
+   - **Endgame Physical Export Pipeline (`POST /api/export-build`):**
+     - Writes a ready-to-manufacture bundle to `backend/exports/{project_id}/`:
+       1. `stls/*.stl` (calibrated for 3.2mm M3 pass-through and 4.0mm brass heat-set inserts)
+       2. `rover.urdf` (standard Unified Robot Description Format for ROS/Gazebo/Isaac Sim)
+       3. `BOM.csv` (MG996R/SG90 servos, 608ZZ bearings, M3x12mm SHCS screws, ESP32-S3, 18650 sled)
+       4. `firmware/main.py` (pre-calibrated MicroPython PWM + 2-DOF inverse kinematics script)
 
-Request:
-```json
-{
-  "prompt": "Construct a sci-fi reactor bay with defensive blockades.",
-  "intentally_flawed_first_pass": true
-}
-```
-
-Response:
-```json
-{
-  "project_id": "job_4091",
-  "theme": "industrial_facility",
-  "world_bounds": {"x": 24.0, "z": 24.0},
-  "entities": [
-    {"id": "spawn_pad", "asset_key": "player", "x": 0.0, "y": 0.5, "z": 0.0, "scale": 1.0, "solid": false},
-    {"id": "data_core", "asset_key": "goal", "x": 10.0, "y": 0.5, "z": 10.0, "scale": 1.0, "solid": false},
-    {"id": "blast_door", "asset_key": "obstacle", "x": 5.0, "y": 1.5, "z": 5.0, "scale": 2.0, "solid": true}
-  ]
-}
-```
-
-### B. QA Bug Report & Hotfix (`POST /api/qa-audit`)
-
-The Rust client uploads the current viewport render as multipart PNG data (`file`) alongside `project_id` and current level JSON state. The Visual QA Tester returns:
-
-```json
-{
-  "project_id": "job_4091",
-  "qa_status": "hotfix_required",
-  "critique": "blast_door completely seals off the corridor to data_core. Shifting asset 4 units along X to open a navigable path.",
-  "hotfixes": [
-    {
-      "id": "blast_door",
-      "action": "reposition",
-      "x": 9.0,
-      "y": 1.5,
-      "z": 5.0
-    }
-  ]
-}
-```
-
----
-
-## 2. Gemini 4 Argon & Managed Agents Integration
-
-- Uses `google-genai >= 2.3.0` Interactions API (`client.interactions.create(...)`).
-- **Studio Director & Level Architect:** Uses `gemini-4-argon` and/or Managed Agent `antigravity-preview-09-2026` with `thinking_level="medium"`.
-- **Visual QA Playtester:** Multimodal verification loop inspecting live engine PNG frame captures combined with entity coordinate graphs to detect navigation blockers and issue deterministic transform deltas.
-- **No Legacy Parameters:** Strictly omits deprecated `temperature`, `top_p`, `top_k`, and `thinking_budget` parameters per the Gemini 4 Argon specification.
+2. **JORGE (`game_client/` — Native Rust / Bevy 0.14 Desktop Engine):**
+   - Renders the 3D driving course and articulated 4-wheel rover + 2-DOF modular arm on Apple Silicon (`wgpu` Metal backend).
+   - Downloads the Managed Agent's generated `chassis_skin.png` texture over HTTP and binds it live to the rover's PBR `StandardMaterial`.
+   - Streams driving controls (`WASD`) to the MuJoCo physics server and renders live MuJoCo CoM & $\tau = r \times F$ torque telemetry on the HUD.
