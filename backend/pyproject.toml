@@ -1,0 +1,15 @@
+[project]
+name = "argon-studio-backend"
+version = "0.1.0"
+description = "Gretchen: Autonomous AI Game Studio Backend powered by Gemini 4 Argon & Managed Agents"
+readme = "../README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+    "pydantic>=2.9.0",
+    "python-dotenv>=1.0.1",
+    "google-genai>=2.3.0",
+    "pillow>=11.0.0",
+]

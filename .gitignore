@@ -1,0 +1,30 @@
+# Env & Secrets
+.env
+.env.*
+!.env.example
+
+# Python / uv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.ruff_cache/
+
+# Rust / Cargo
+/target/
+/game_client/target/
+**/*.rs.bk
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# NOTE: .reference/ is intentionally tracked in git!
+!/.reference/
+!/.reference/**

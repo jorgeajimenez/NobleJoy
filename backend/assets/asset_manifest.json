@@ -1,0 +1,25 @@
+{
+  "assets": {
+    "player": {
+      "model_path": "models/player.glb",
+      "primitive_fallback": "capsule",
+      "default_scale": 1.0,
+      "color_rgb": [0.2, 0.85, 1.0],
+      "description": "Player controlled cybernetic operative spawn point"
+    },
+    "goal": {
+      "model_path": "models/goal.glb",
+      "primitive_fallback": "torus_beacon",
+      "default_scale": 1.0,
+      "color_rgb": [0.1, 1.0, 0.45],
+      "description": "Reactor data core / objective beacon"
+    },
+    "obstacle": {
+      "model_path": "models/obstacle.glb",
+      "primitive_fallback": "cuboid",
+      "default_scale": 2.0,
+      "color_rgb": [0.95, 0.25, 0.25],
+      "description": "Heavy industrial blast door or containment wall"
+    }
+  }
+}
