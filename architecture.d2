@@ -1,0 +1,369 @@
+direction: down
+
+style: {
+  fill: "#FFFFFF"
+  stroke: "#1F1F1F"
+  stroke-width: 3
+  font-color: "#1F1F1F"
+}
+
+classes: {
+  stage_grey: {
+    style: {
+      fill: "#F4F4F4"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#1F1F1F"
+      border-radius: 12
+      font-size: 20
+      bold: true
+    }
+  }
+  stage_white: {
+    style: {
+      fill: "#FFFFFF"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#1F1F1F"
+      border-radius: 12
+      font-size: 20
+      bold: true
+    }
+  }
+  pink_box: {
+    shape: rectangle
+    style: {
+      fill: "#ED1B76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      border-radius: 8
+      font-size: 15
+      bold: true
+    }
+  }
+  teal_box: {
+    shape: rectangle
+    style: {
+      fill: "#037A76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      border-radius: 8
+      font-size: 15
+      bold: true
+    }
+  }
+  pink_hex: {
+    shape: hexagon
+    style: {
+      fill: "#ED1B76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+  teal_hex: {
+    shape: hexagon
+    style: {
+      fill: "#037A76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+  pink_cyl: {
+    shape: cylinder
+    style: {
+      fill: "#ED1B76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+  teal_cyl: {
+    shape: cylinder
+    style: {
+      fill: "#037A76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+  pink_circle: {
+    shape: circle
+    style: {
+      fill: "#ED1B76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+  teal_circle: {
+    shape: circle
+    style: {
+      fill: "#037A76"
+      stroke: "#1F1F1F"
+      stroke-width: 3
+      font-color: "#FFFFFF"
+      font-size: 15
+      bold: true
+    }
+  }
+}
+
+stage1_governance: "STAGE 1: Prompt Ingress & Cloud Run Governance Gateway" {
+  class: stage_grey
+  direction: down
+
+  prompt_ui: "Bevy Studio UI & Robot Designer\n(Rover / Bipedal Mech / Quadruped / Siege Tank)" {
+    class: pink_box
+  }
+
+  fastapi_gateway: "Google Cloud Run FastAPI Gateway\n(X-API-Key Auth + /api/v1/* Endpoints)" {
+    class: teal_box
+  }
+
+  policy_engine: "ExecutionPolicyEngine (registry.py)\nIAM Clearance, Rate Limits, CEL Scoping & Model Armor" {
+    class: pink_hex
+  }
+
+  spiffe_registry: "Central Agent Registry (SPIFFE + A2A Cards)\nspiffe://noblejoy.argon.studio/ns/{game|test}/sa/*" {
+    class: teal_cyl
+  }
+
+  prompt_ui -> fastapi_gateway: "HTTPS + token_client" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  fastapi_gateway -> policy_engine: "Validate Request" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  policy_engine -> spiffe_registry: "Authorize Agent Identity" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+}
+
+stage2_game_agents: "STAGE 2: Registered Game Agents (Multi-Agent Synthesis & Managed Sandbox)" {
+  class: stage_white
+  direction: down
+
+  studio_director: "studio_director (gemini-4-argon, thinking=low)\nSynthesizes Plot, Palette, Robot Form & Physics Spec" {
+    class: pink_box
+  }
+
+  simready_fetcher: "simready_fetcher (gemini-3.8-flash)\nSimReady Central OpenUSD / URDF Hardware Catalog" {
+    class: teal_cyl
+  }
+
+  level_architect: "level_architect (Managed Agent: antigravity-preview-09-2026)\nLinux Sandbox (/workspace) -> 3D Scene, MJCF, URDF & M3 STLs" {
+    class: teal_hex
+  }
+
+  nano_banana: "nano_banana_skin_painter (gemini-nano-banana-2.1)\nSeamless PBR Chassis Texture (PNG) & Theme Audio (WAV)" {
+    class: pink_box
+  }
+
+  artifact_puller: "Environments & Files API Tarball Streamer\nSingle-Stream .tar Unpack to backend/assets/" {
+    class: teal_cyl
+  }
+
+  studio_director -> level_architect: "Creative & Physics Spec" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  simready_fetcher -> level_architect: "COTS Actuators (SG90 / MG996R / TT)" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  studio_director -> nano_banana: "Visual & Audio Prompt" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  level_architect -> artifact_puller: "Export /workspace Tarball" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  nano_banana -> artifact_puller: "Write PNG & WAV Assets" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+}
+
+stage3_render_watch: "STAGE 3: Apple Silicon Native 3D Engine (RENDER & WATCH)" {
+  class: stage_grey
+  direction: down
+
+  level_spawner: "Bevy 0.14 ECS Level & Robot Spawner (level_builder.rs)\nIn-Place 3D Scene, PBR Skin & Audio Hot-Reload" {
+    class: teal_box
+  }
+
+  viewport_capture: "RENDER\ncapture.rs\n(PNG Frame)" {
+    class: pink_circle
+  }
+
+  wgpu_detector: "WATCH (GPU Compute)\ngbuffer_detector.rs + artifact_detector.wgsl\nApple Metal Depth / Normal / Shadow Buffer Audit" {
+    class: teal_hex
+  }
+
+  level_spawner -> viewport_capture: "Capture Frame #30" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  level_spawner -> wgpu_detector: "Read G-Buffer Textures" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+}
+
+stage4_critique_fix: "STAGE 4: Registered Test Agents & Closed Self-Healing Loop (CRITIQUE & FIX)" {
+  class: stage_white
+  direction: down
+
+  visual_qa: "CRITIQUE (Vision QA)\nvisual_qa_tester (gemini-4-argon)\nAudits viewport_capture.png + Scene Graph vs Goal" {
+    class: pink_hex
+  }
+
+  gbuffer_qa: "CRITIQUE (Shader QA)\ngbuffer_artifact_validator (gemini-3.8-flash)\nDetects Type-1 Z-Fighting & Type-2 Shadow Acne" {
+    class: teal_hex
+  }
+
+  mujoco_qa: "CRITIQUE (Physics QA)\nmujoco_sanity_verifier (Native MuJoCo MjModel/MjData)\nCoM Wheelbase Footprint & Servo Torque Gate (r x F)" {
+    class: pink_box
+  }
+
+  patch_engine: "FIX IN LOOP (Autonomous Self-Healing Engine)\n• Translates Blocking Blast Door (z=2.5 -> z=6.5)\n• Despawns Coplanar Z-Fighting Geometry\n• Upgrades Stalled SG90 (1.8 kg-cm) -> MG996R (11.0 kg-cm)" {
+    class: teal_box
+  }
+
+  verified_gate: "PASSED\nGate" {
+    class: pink_circle
+  }
+
+  visual_qa -> mujoco_qa: "Run Native Physics & Torque Check" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  visual_qa -> patch_engine: "Scene Obstruction Detected" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  gbuffer_qa -> patch_engine: "Coplanar Anomaly Detected" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  mujoco_qa -> patch_engine: "Actuator Stall / CoM Tipping" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  mujoco_qa -> verified_gate: "All Checks Green" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+}
+
+stage5_manufacturing: "STAGE 5: Physical Manufacturing & SimReady Export Bundle" {
+  class: stage_grey
+  direction: down
+
+  usd_exporter: "usd_physics_modifier (gemini-4-argon, Admin-Gated)\nCompiles Verified Digital Twin to Physical Hardware Package" {
+    class: pink_hex
+  }
+
+  stl_meshes: "3D-Printable CAD Meshes\nstls/*.stl (M3 Clearances)" {
+    class: teal_cyl
+  }
+
+  urdf_mjcf: "OpenUSD / URDF & MJCF\nrover.urdf + physics_scene.xml" {
+    class: pink_cyl
+  }
+
+  bom_firmware: "SimReady BOM & Firmware\nBOM.csv + ESP32-S3 main.py" {
+    class: teal_cyl
+  }
+
+  usd_exporter -> stl_meshes: "Export CAD" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  usd_exporter -> urdf_mjcf: "Export Kinematics" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+  usd_exporter -> bom_firmware: "Export Hardware Spec" {
+    style.stroke: "#1F1F1F"
+    style.stroke-width: 3
+    style.font-color: "#1F1F1F"
+  }
+}
+
+stage1_governance.spiffe_registry -> stage2_game_agents.studio_director: "Dispatch Authorized Game Agents" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage1_governance.spiffe_registry -> stage2_game_agents.simready_fetcher: "Fetch SimReady Catalog" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage2_game_agents.artifact_puller -> stage3_render_watch.level_spawner: "Deliver Scene JSON, STLs, PBR PNG & WAV" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage3_render_watch.viewport_capture -> stage4_critique_fix.visual_qa: "WATCH: Stream viewport_capture.png + Scene JSON" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage3_render_watch.wgpu_detector -> stage4_critique_fix.gbuffer_qa: "WATCH: Stream GPU Compute Anomaly Buffer" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage4_critique_fix.patch_engine -> stage3_render_watch.level_spawner: "FIX LOOP: Hot-Patch ECS Transforms & Actuator Spec -> Re-Render" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}
+
+stage4_critique_fix.verified_gate -> stage5_manufacturing.usd_exporter: "Verification PASSED -> Unlock Hardware Export" {
+  style.stroke: "#1F1F1F"
+  style.stroke-width: 3
+  style.font-color: "#1F1F1F"
+}

@@ -21,6 +21,8 @@ We have structured the monorepo so **Gretchen** (`backend/`) and **Jorge** (`gam
 
 ## Architecture Overview
 
+![Argon Game Studio Architecture](./architecture.png)
+
 ```
                         GRETCHEN: THE OUTSOURCED STUDIO (BACKEND)
        ┌────────────────────────────────────────────────────────────────────────┐
