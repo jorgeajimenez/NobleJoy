@@ -36,6 +36,8 @@ pub struct EnvironmentStyleSpec {
     pub building_style: String,
     #[serde(default = "default_prop_style")]
     pub prop_style: String,
+    #[serde(default = "default_soundtrack_style")]
+    pub soundtrack_style: String,
     #[serde(default = "default_has_dashes")]
     pub has_center_dashes: bool,
 }
@@ -58,6 +60,9 @@ fn default_building_style() -> String {
 fn default_prop_style() -> String {
     "streetlamp".to_string()
 }
+fn default_soundtrack_style() -> String {
+    "Cyberpunk 2099 Synthwave Arpeggio".to_string()
+}
 fn default_has_dashes() -> bool {
     true
 }
@@ -71,6 +76,7 @@ impl Default for EnvironmentStyleSpec {
             sky_color: default_sky_color(),
             building_style: default_building_style(),
             prop_style: default_prop_style(),
+            soundtrack_style: default_soundtrack_style(),
             has_center_dashes: true,
         }
     }
@@ -80,6 +86,8 @@ impl Default for EnvironmentStyleSpec {
 pub struct CarDesignSpec {
     #[serde(default = "default_body_style")]
     pub body_style: String,
+    #[serde(default = "default_robot_form")]
+    pub robot_form: String,
     #[serde(default = "default_primary_color")]
     pub primary_color: [f32; 3],
     #[serde(default = "default_accent_color")]
@@ -95,6 +103,9 @@ pub struct CarDesignSpec {
 fn default_body_style() -> String {
     "street_muscle".to_string()
 }
+fn default_robot_form() -> String {
+    "rover_car".to_string()
+}
 fn default_primary_color() -> [f32; 3] {
     [0.18, 0.78, 0.98]
 }
@@ -109,6 +120,7 @@ impl Default for CarDesignSpec {
     fn default() -> Self {
         Self {
             body_style: default_body_style(),
+            robot_form: default_robot_form(),
             primary_color: default_primary_color(),
             accent_color: default_accent_color(),
             wheel_scale: 1.0,
@@ -174,6 +186,8 @@ pub struct LevelContract {
     pub required_capability: String,
     #[serde(default)]
     pub skin_url: String,
+    #[serde(default)]
+    pub music_url: String,
     #[serde(default)]
     pub mjcf_url: String,
     #[serde(default)]

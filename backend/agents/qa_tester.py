@@ -11,6 +11,8 @@ class VisualQATesterAgent:
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
+        self.exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto").lower()
+        self.model_id = os.getenv("GEMINI_MODEL_ID", "gemini-4-argon")
 
     def audit_viewport(
         self,
@@ -43,7 +45,11 @@ class VisualQATesterAgent:
             "}"
         )
 
-        if self.api_key and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here"):
+        if (
+            self.exec_mode != "local_fast"
+            and self.api_key
+            and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here")
+        ):
             try:
                 from google import genai
 
@@ -60,7 +66,7 @@ class VisualQATesterAgent:
                     )
 
                 interaction = client.interactions.create(
-                    model="gemini-4-argon",
+                    model=self.model_id,
                     input=inputs,
                     generation_config={"thinking_level": "medium"},
                 )
@@ -81,7 +87,7 @@ class VisualQATesterAgent:
             "project_id": project_id,
             "qa_status": "hotfix_required",
             "critique": (
-                "Visual + MuJoCo Street QA Audit: (1) 'blast_door' roadblock at (19.0, 0.0) seals off Main Cyber Avenue; "
+                "Visual + MuJoCo Street QA Audit: (1) 'blast_door' roadblock at (19.0, 0.0) seals off Main Avenue; "
                 "shifting roadblock onto the sidewalk at (19.0, 1.5, 6.5). (2) Upgrading MuJoCo street drive torque to 6.0 N*m."
             ),
             "hotfixes": [

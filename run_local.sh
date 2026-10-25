@@ -44,10 +44,13 @@ else
   echo "               Copy .env_sample to .env and set GEMINI_API_KEY for live Gemini 4 Argon calls."
 fi
 
+EXEC_MODE="${STUDIO_EXECUTION_MODE:-auto}"
+echo "[Orchestrator] STUDIO_EXECUTION_MODE=${EXEC_MODE} (options: auto | local_fast | gemini_direct | managed_agent)"
+
 if [[ -n "${GEMINI_API_KEY:-}" && "${GEMINI_API_KEY}" != "your_gemini_key" && "${GEMINI_API_KEY}" != "your_gemini_api_key_here" ]]; then
   echo "[Orchestrator] GEMINI_API_KEY detected (${GEMINI_API_KEY_NAME:-active}). Live Generative Studio enabled!"
 else
-  echo "[Orchestrator] GEMINI_API_KEY not set or placeholder — backend will use deterministic studio fallbacks."
+  echo "[Orchestrator] GEMINI_API_KEY not set or placeholder — backend will run in deterministic local_fast studio mode."
 fi
 
 # 2. Ensure Python uv virtual environment & dependencies are ready
@@ -74,10 +77,12 @@ for _ in {1..30}; do
   sleep 0.5
 done
 
+ACTIVE_BACKEND_URL="${STUDIO_BACKEND_URL:-http://127.0.0.1:${STUDIO_PORT}}"
 echo "[Orchestrator] Web Dashboard: http://127.0.0.1:${STUDIO_PORT}/"
+echo "[Orchestrator] Active Client Endpoint: ${ACTIVE_BACKEND_URL}"
 echo "[Orchestrator] Backend Logs:  $ROOT_DIR/backend_studio.log"
 echo "[Orchestrator] Launching Jorge Rust 3D GTA Street Driving Client..."
 echo "=================================================================="
 
 cd "$CLIENT_DIR"
-STUDIO_BACKEND_URL="http://127.0.0.1:${STUDIO_PORT}" cargo run
+STUDIO_BACKEND_URL="${ACTIVE_BACKEND_URL}" cargo run

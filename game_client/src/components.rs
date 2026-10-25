@@ -58,11 +58,13 @@ pub struct GameSessionState {
     pub reward_part: RewardPartSpec,
     pub sanity_check: PhysicsSanityCheck,
     pub speed_mps: f32,
+    pub player_pos: Vec3,
     pub rover_yaw: f32,
     pub rover_speed: f32,
     pub showroom_orbit_angle: f32,
     pub mujoco_engine: String,
     pub downloaded_skin_asset: Option<String>,
+    pub downloaded_music_asset: Option<String>,
     pub status_banner: String,
     pub last_gbuffer_summary: String,
     pub qa_cleaned: bool,
@@ -74,17 +76,17 @@ pub struct GameSessionState {
 impl Default for GameSessionState {
     fn default() -> Self {
         Self {
-            ui_mode: UiMode::WelcomeStudio,
-            prompt_input: "Medieval cobblestone castle streets with dragon gate and royal war wagon"
-                .to_string(),
-            last_prompt: "Medieval cobblestone castle streets with dragon gate and royal war wagon"
+            // Start directly in Cyberpunk City driving mode so user can drive immediately and press [Tab] to prompt "take me to medieval times"!
+            ui_mode: UiMode::Driving,
+            prompt_input: "take me to medieval times".to_string(),
+            last_prompt: "Neon cyberpunk downtown avenue with towering skyscrapers and street rally car"
                 .to_string(),
             current_level: 1,
-            game_title: "Argon Game Studio".to_string(),
+            game_title: "Neon Overdrive 2099".to_string(),
             plot_summary: String::new(),
             objective: String::new(),
             active_project_id: String::new(),
-            theme: String::new(),
+            theme: "neon_downtown_avenue".to_string(),
             environment_style: EnvironmentStyleSpec::default(),
             car_design: CarDesignSpec::default(),
             current_contract: None,
@@ -92,11 +94,13 @@ impl Default for GameSessionState {
             reward_part: RewardPartSpec::default(),
             sanity_check: PhysicsSanityCheck::default(),
             speed_mps: 0.0,
+            player_pos: Vec3::new(0.0, 0.35, 0.0),
             rover_yaw: 0.0,
             rover_speed: 0.0,
             showroom_orbit_angle: 0.5,
-            mujoco_engine: String::new(),
+            mujoco_engine: "mujoco_native (rover_car)".to_string(),
             downloaded_skin_asset: None,
+            downloaded_music_asset: None,
             status_banner: String::new(),
             last_gbuffer_summary: "Unverified (Press [Q] to run WGPU Compute G-Buffer Validator + Visual QA)"
                 .to_string(),

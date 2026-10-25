@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 
 from .artifact_puller import (
     GENERATED_ASSETS_DIR,
+    generate_theme_soundtrack_wav,
     generate_vehicle_skin_texture,
     pull_managed_agent_workspace,
     write_modular_part_stl,
@@ -64,7 +65,6 @@ def default_city_street_entities(theme: str = "neon_downtown_avenue", level_inde
         },
     ]
 
-    # Add extra slalom obstacles for higher campaign levels
     for extra in range(1, level_index):
         entities.append(
             {
@@ -78,7 +78,6 @@ def default_city_street_entities(theme: str = "neon_downtown_avenue", level_inde
             }
         )
 
-    # Roadside architecture lining the left (Z = -9.5) and right (Z = +9.5) sides of the street
     building_heights = (
         [1.8, 2.5, 2.0, 2.8, 2.2, 2.6, 1.9, 2.4]
         if "medieval" in theme or "desert" in theme or "arctic" in theme
@@ -113,11 +112,15 @@ def default_city_street_entities(theme: str = "neon_downtown_avenue", level_inde
 
 
 class LevelArchitectAgent:
-    """Drafts the spatial street course & pulls generated MJCF/URDF/STL/Skin files from the Managed Agent sandbox."""
+    """Drafts the spatial street course & pulls generated MJCF/URDF/STL/Skin/WAV files from the Managed Agent sandbox."""
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
+        self.exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto").lower()
         self.use_managed_agent = os.getenv("USE_MANAGED_AGENT", "true").lower() == "true"
+        self.model_id = os.getenv("GEMINI_MODEL_ID", "gemini-4-argon")
+        self.managed_agent_id = os.getenv("MANAGED_AGENT_ID", "antigravity-preview-09-2026")
+        self.managed_agent_type = os.getenv("MANAGED_AGENT_TYPE", "antigravity")
 
     def build_level_contract(
         self,
@@ -133,6 +136,7 @@ class LevelArchitectAgent:
         car_physics = directive.get(
             "car_physics",
             {
+                "robot_form": directive.get("car_design", {}).get("robot_form", "rover_car"),
                 "chassis_mass_kg": 4.5,
                 "wheel_friction": 1.35,
                 "motor_torque_nm": 4.0,
@@ -161,7 +165,7 @@ class LevelArchitectAgent:
             f"Place 'spawn_pad' (asset_key='player') at (0, 0.35, 0) and 'data_core' (asset_key='goal') at ({goal_x}, 0.5, 0).\n"
             "When running inside the Managed Agent Linux sandbox (/workspace):\n"
             "1. Write `/workspace/level_contract.json` with the 3D street entities.\n"
-            "2. Write `/workspace/rover.urdf` and `/workspace/car_level.xml` (MuJoCo MJCF) for the 4-wheel vehicle.\n"
+            "2. Write `/workspace/rover.urdf` and `/workspace/car_level.xml` (MuJoCo MJCF) for the vehicle/robot.\n"
             "3. Print ONLY the valid JSON for the LevelContract to stdout.\n"
         )
         if seed_blockade:
@@ -174,17 +178,24 @@ class LevelArchitectAgent:
         extracted_sandbox_files: List[str] = []
         parsed_entities: List[Dict[str, Any]] = []
 
-        if self.api_key and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here"):
+        if (
+            self.exec_mode != "local_fast"
+            and self.api_key
+            and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here")
+        ):
             try:
                 from google import genai
 
                 client = genai.Client(api_key=self.api_key)
-                if self.use_managed_agent:
+                use_remote = self.exec_mode == "managed_agent" or (
+                    self.exec_mode == "auto" and self.use_managed_agent
+                )
+                if use_remote:
                     interaction = client.interactions.create(
-                        agent="antigravity-preview-09-2026",
+                        agent=self.managed_agent_id,
                         agent_config={
-                            "type": "antigravity",
-                            "model": "gemini-4-argon",
+                            "type": self.managed_agent_type,
+                            "model": self.model_id,
                         },
                         input=prompt,
                         environment="remote",
@@ -197,7 +208,7 @@ class LevelArchitectAgent:
                     )
                 else:
                     interaction = client.interactions.create(
-                        model="gemini-4-argon",
+                        model=self.model_id,
                         input=prompt,
                         generation_config={"thinking_level": "medium"},
                     )
@@ -220,11 +231,20 @@ class LevelArchitectAgent:
             api_key=self.api_key,
         )
 
+        music_info = generate_theme_soundtrack_wav(
+            theme=theme,
+            project_id=project_id,
+            wav_name="theme_music.wav",
+        )
+
         part_id = reward_part.get("part_id", "high_torque_wheel_hub_v2")
         stl_path = write_modular_part_stl(
             GENERATED_ASSETS_DIR / project_id / f"{part_id}.stl",
             part_id=part_id,
         )
+
+        env_style = dict(directive.get("environment_style", {}))
+        env_style.setdefault("soundtrack_style", music_info["soundtrack_title"])
 
         return {
             "project_id": project_id,
@@ -240,16 +260,17 @@ class LevelArchitectAgent:
             ),
             "theme": theme,
             "world_bounds": bounds,
-            "environment_style": directive.get("environment_style", {}),
+            "environment_style": env_style,
             "car_design": directive.get("car_design", {}),
             "environmental_hazard": directive.get("environmental_hazard", "mid_avenue_blast_door_blockade"),
             "required_capability": directive.get("required_capability", "high_torque_4wd"),
             "car_physics": car_physics,
             "reward_part": reward_part,
             "skin_url": skin_info["url"],
+            "music_url": music_info["url"],
             "mjcf_url": f"/assets/generated/{project_id}/car_level.xml",
             "urdf_url": f"/assets/generated/{project_id}/rover.urdf",
             "stl_url": f"/assets/generated/{project_id}/{part_id}.stl",
-            "sandbox_files": extracted_sandbox_files + [skin_info["local_path"], stl_path],
+            "sandbox_files": extracted_sandbox_files + [skin_info["local_path"], music_info["local_path"], stl_path],
             "entities": parsed_entities,
         }

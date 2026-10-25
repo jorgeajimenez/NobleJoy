@@ -13,10 +13,13 @@ pub enum StudioNetEvent {
     LevelCommissioned {
         contract: LevelContract,
         local_skin_asset: Option<String>,
+        local_music_asset: Option<String>,
+        preserve_pose: bool,
     },
     CommissionFallback {
         prompt: String,
         level_index: u32,
+        preserve_pose: bool,
         reason: String,
     },
     MujocoStepCompleted(MujocoStepResponse),
@@ -45,7 +48,12 @@ impl Default for StudioNetworkChannel {
     }
 }
 
-pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String, level_index: u32) {
+pub fn request_commission_level(
+    net: &StudioNetworkChannel,
+    prompt: String,
+    level_index: u32,
+    preserve_pose: bool,
+) {
     let tx = net.tx.clone();
     let base_url = net.backend_url.clone();
     let url = format!("{base_url}/api/commission-level");
@@ -77,15 +85,37 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String, leve
                             }
                         }
                     }
+
+                    let mut local_music_asset = None;
+                    if !contract.music_url.is_empty() {
+                        let music_full_url = format!("{base_url}{}", contract.music_url);
+                        if let Ok(wav_resp) = client.get(&music_full_url).send() {
+                            if let Ok(bytes) = wav_resp.bytes() {
+                                let asset_rel =
+                                    format!("generated/{}_music.wav", contract.project_id);
+                                let disk_path = Path::new("assets").join(&asset_rel);
+                                if let Some(parent) = disk_path.parent() {
+                                    let _ = fs::create_dir_all(parent);
+                                }
+                                if fs::write(&disk_path, &bytes).is_ok() {
+                                    local_music_asset = Some(asset_rel);
+                                }
+                            }
+                        }
+                    }
+
                     let _ = tx.send(StudioNetEvent::LevelCommissioned {
                         contract,
                         local_skin_asset,
+                        local_music_asset,
+                        preserve_pose,
                     });
                 }
                 Err(err) => {
                     let _ = tx.send(StudioNetEvent::CommissionFallback {
                         prompt,
                         level_index,
+                        preserve_pose,
                         reason: format!("Parse fallback ({err})"),
                     });
                 }
@@ -94,6 +124,7 @@ pub fn request_commission_level(net: &StudioNetworkChannel, prompt: String, leve
                 let _ = tx.send(StudioNetEvent::CommissionFallback {
                     prompt,
                     level_index,
+                    preserve_pose,
                     reason: format!("Offline Studio Engine ({err})"),
                 });
             }
@@ -107,6 +138,7 @@ pub fn request_mujoco_step(
     throttle: f32,
     steering: f32,
     equip_upgrade: Option<bool>,
+    robot_form: Option<String>,
 ) {
     let tx = net.tx.clone();
     let url = format!("{}/api/physics-step", net.backend_url);
@@ -118,6 +150,7 @@ pub fn request_mujoco_step(
             "throttle": throttle,
             "steering": steering,
             "equip_upgrade": equip_upgrade,
+            "robot_form": robot_form,
         });
         if let Ok(resp) = client.post(&url).json(&payload).send() {
             if let Ok(step_data) = resp.json::<MujocoStepResponse>() {

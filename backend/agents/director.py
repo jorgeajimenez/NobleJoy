@@ -1,20 +1,34 @@
-"""Studio Director Agent: Scopes game plot, world theme (Medieval, Cyber, Desert, Arctic, etc.), car design, and MuJoCo physics."""
+"""Studio Director Agent: Scopes game plot, world theme (Medieval, Cyber, Desert, Arctic, etc.), car/robot design, and MuJoCo physics."""
 
 import json
 import os
 from typing import Any, Dict
 
 
-def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]:
-    """Infer a rich world theme, plot, environment palette, and car design from the user's natural-language prompt."""
+def infer_robot_form(user_prompt: str) -> str:
+    """Detect if the user is requesting a Transformers-style MuJoCo robot morphology swap."""
     p = user_prompt.lower()
+    if any(k in p for k in ["mech", "biped", "transformer", "optimus", "walker", "humanoid", "gundam", "striker"]):
+        return "bipedal_mech"
+    if any(k in p for k in ["spider", "quadruped", "dog", "spot", "crawler_legs", "insect", "arachnid"]):
+        return "quadruped_crawler"
+    if any(k in p for k in ["tank", "tread", "tracked", "panzer", "artillery", "behemoth"]):
+        return "siege_tank"
+    return "rover_car"
+
+
+def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]:
+    """Infer a rich world theme, plot, environment palette, soundtrack, and car/robot design from the user's prompt."""
+    p = user_prompt.lower()
+    robot_form = infer_robot_form(user_prompt)
+
     if any(k in p for k in ["medieval", "castle", "knight", "kingdom", "cobble", "dragon", "tavern", "fantasy", "sword"]):
-        return {
+        preset = {
             "theme": "medieval_cobblestone_kingdom",
             "game_title": "Chronicles of Iron & Cobble",
             "plot_summary": (
                 f"Chapter {level_index}: Lord Malakor has lowered the Iron Portcullis across King's Cobblestone Road. "
-                "Pilot the Royal Siege Wagon past the timber taverns and stone keep towers, breach the blockade, "
+                "Pilot the Royal Siege Wagon past timber taverns and stone castle keeps, breach the blockade, "
                 "and deliver the Dragon Relic to the Citadel Sanctuary."
             ),
             "objective": "Drive down King's Cobblestone Road, clear the Iron Portcullis gate, and reach the Citadel Sanctuary.",
@@ -27,10 +41,12 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
                 "sky_color": [0.14, 0.17, 0.24],
                 "building_style": "medieval_keep",
                 "prop_style": "torch_post",
+                "soundtrack_style": "Medieval Tavern Lute & War Drums",
                 "has_center_dashes": False,
             },
             "car_design": {
                 "body_style": "medieval_wagon",
+                "robot_form": robot_form,
                 "primary_color": [0.58, 0.36, 0.16],
                 "accent_color": [0.85, 0.68, 0.20],
                 "wheel_scale": 1.15,
@@ -39,8 +55,8 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
             },
             "skin_prompt": f"Medieval royal war wagon oak wood and forged Damascus iron armor texture with gold heraldic trim for '{user_prompt}'",
         }
-    if any(k in p for k in ["desert", "mars", "canyon", "wasteland", "dune", "sand", "mad", "rust"]):
-        return {
+    elif any(k in p for k in ["desert", "mars", "canyon", "wasteland", "dune", "sand", "mad", "rust"]):
+        preset = {
             "theme": "wasteland_convoy_canyon",
             "game_title": "Mad Torque: Red Dust Run",
             "plot_summary": (
@@ -57,10 +73,12 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
                 "sky_color": [0.32, 0.18, 0.12],
                 "building_style": "desert_mesa",
                 "prop_style": "torch_post",
+                "soundtrack_style": "Fury Canyon Industrial Bass Pulse",
                 "has_center_dashes": False,
             },
             "car_design": {
                 "body_style": "armored_crawler",
+                "robot_form": robot_form,
                 "primary_color": [0.82, 0.42, 0.15],
                 "accent_color": [0.22, 0.22, 0.24],
                 "wheel_scale": 1.30,
@@ -69,8 +87,8 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
             },
             "skin_prompt": f"Weathered desert wasteland off-road crawler armor plating with hazard stripes for '{user_prompt}'",
         }
-    if any(k in p for k in ["arctic", "ice", "snow", "glacier", "frozen", "cryo", "winter"]):
-        return {
+    elif any(k in p for k in ["arctic", "ice", "snow", "glacier", "frozen", "cryo", "winter"]):
+        preset = {
             "theme": "arctic_glacier_outpost",
             "game_title": "Cryo-Drive: Subzero Protocol",
             "plot_summary": (
@@ -87,10 +105,12 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
                 "sky_color": [0.10, 0.18, 0.28],
                 "building_style": "arctic_dome",
                 "prop_style": "cryo_pylon",
+                "soundtrack_style": "Subzero Crystalline Ambient Synth",
                 "has_center_dashes": True,
             },
             "car_design": {
                 "body_style": "cyber_interceptor",
+                "robot_form": robot_form,
                 "primary_color": [0.92, 0.96, 1.0],
                 "accent_color": [0.10, 0.78, 0.98],
                 "wheel_scale": 1.20,
@@ -99,61 +119,90 @@ def infer_theme_preset(user_prompt: str, level_index: int = 1) -> Dict[str, Any]
             },
             "skin_prompt": f"Arctic exploration rover white carbon composite with cyan thermal conduits for '{user_prompt}'",
         }
+    else:
+        preset = {
+            "theme": "neon_downtown_avenue",
+            "game_title": "Neon Overdrive 2099",
+            "plot_summary": (
+                f"Chapter {level_index}: CorpSec locked down Main Cyber Avenue with an armored blast door. "
+                f"Mission Brief ('{user_prompt}'): Thread the needle through downtown skyscrapers, run Visual QA to override "
+                "the blockade, and deliver the neural payload to the Extraction Beacon."
+            ),
+            "objective": "Drive down Main Cyber Avenue through the skyscraper blocks to reach the Extraction Beacon.",
+            "environmental_hazard": "mid_avenue_blast_door_blockade",
+            "required_capability": "high_torque_4wd + 2-DOF street clearance",
+            "environment_style": {
+                "ground_color": [0.07, 0.08, 0.11],
+                "road_color": [0.14, 0.16, 0.20],
+                "sidewalk_color": [0.26, 0.29, 0.34],
+                "sky_color": [0.05, 0.07, 0.12],
+                "building_style": "cyber_skyscraper",
+                "prop_style": "streetlamp",
+                "soundtrack_style": "Cyberpunk 2099 Synthwave Arpeggio",
+                "has_center_dashes": True,
+            },
+            "car_design": {
+                "body_style": "street_muscle",
+                "robot_form": robot_form,
+                "primary_color": [0.15, 0.78, 0.98],
+                "accent_color": [1.0, 0.45, 0.10],
+                "wheel_scale": 1.0,
+                "ride_height": 0.0,
+                "roof_attachment": "m3_servo_arm",
+            },
+            "skin_prompt": f"GTA cyber-street rally car hood & chassis decal skin for '{user_prompt}', carbon fiber with neon cyan & orange racing stripes",
+        }
 
-    # Default / Cyber-City / Custom Prompt
-    return {
-        "theme": "neon_downtown_avenue",
-        "game_title": "Neon Overdrive 2099",
-        "plot_summary": (
-            f"Chapter {level_index}: CorpSec locked down Main Cyber Avenue with an armored blast door. "
-            f"Mission Brief ('{user_prompt}'): Thread the needle through downtown skyscrapers, run Visual QA to override "
-            "the blockade, and deliver the neural payload to the Extraction Beacon."
-        ),
-        "objective": "Drive down Main Cyber Avenue through the skyscraper blocks to reach the Extraction Beacon.",
-        "environmental_hazard": "mid_avenue_blast_door_blockade",
-        "required_capability": "high_torque_4wd + 2-DOF street clearance",
-        "environment_style": {
-            "ground_color": [0.07, 0.08, 0.11],
-            "road_color": [0.14, 0.16, 0.20],
-            "sidewalk_color": [0.26, 0.29, 0.34],
-            "sky_color": [0.05, 0.07, 0.12],
-            "building_style": "cyber_skyscraper",
-            "prop_style": "streetlamp",
-            "has_center_dashes": True,
-        },
-        "car_design": {
-            "body_style": "street_muscle",
-            "primary_color": [0.15, 0.78, 0.98],
-            "accent_color": [1.0, 0.45, 0.10],
-            "wheel_scale": 1.0,
-            "ride_height": 0.0,
-            "roof_attachment": "m3_servo_arm",
-        },
-        "skin_prompt": f"GTA cyber-street rally car hood & chassis decal skin for '{user_prompt}', carbon fiber with neon cyan & orange racing stripes",
-    }
+    # Apply prompt-driven paint/upgrade overrides on top of the theme
+    if "gold" in p:
+        preset["car_design"]["primary_color"] = [0.92, 0.75, 0.18]
+        preset["car_design"]["accent_color"] = [0.98, 0.92, 0.55]
+    elif "red" in p or "crimson" in p:
+        preset["car_design"]["primary_color"] = [0.88, 0.14, 0.18]
+        preset["car_design"]["accent_color"] = [0.95, 0.95, 0.98]
+    elif "stealth" in p or "obsidian" in p or "black" in p:
+        preset["car_design"]["primary_color"] = [0.12, 0.13, 0.16]
+        preset["car_design"]["accent_color"] = [0.10, 0.95, 0.55]
+
+    if "ram" in p:
+        preset["car_design"]["roof_attachment"] = "battering_ram"
+    elif "turbo" in p or "boost" in p:
+        preset["car_design"]["roof_attachment"] = "twin_turbo"
+
+    if "monster" in p or "lifted" in p or "big wheel" in p:
+        preset["car_design"]["wheel_scale"] = 1.35
+        preset["car_design"]["ride_height"] = 0.09
+
+    return preset
 
 
 class StudioDirectorAgent:
-    """Uses Gemini 4 Argon / Managed Agents to scope a complete game plot, theme, car design & MuJoCo brief."""
+    """Uses Gemini 4 Argon / Managed Agents (or configurable execution mode) to scope game plot, theme, car/robot design & MuJoCo brief."""
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
+        self.exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto").lower()
         self.use_managed_agent = os.getenv("USE_MANAGED_AGENT", "true").lower() == "true"
+        self.model_id = os.getenv("GEMINI_MODEL_ID", "gemini-4-argon")
+        self.managed_agent_id = os.getenv("MANAGED_AGENT_ID", "antigravity-preview-09-2026")
+        self.managed_agent_type = os.getenv("MANAGED_AGENT_TYPE", "antigravity")
 
     def scope_brief(self, user_prompt: str, project_id: str, level_index: int = 1) -> Dict[str, Any]:
-        """Translate a raw user prompt into a structured Studio Directive with plot, environment palette, car design & MuJoCo specs."""
+        """Translate a raw user prompt into a structured Studio Directive with plot, environment palette, robot form & MuJoCo specs."""
         preset = infer_theme_preset(user_prompt, level_index=level_index)
+        robot_form = preset["car_design"].get("robot_form", "rover_car")
 
         system_directive = (
             "You are the Studio Executive Director Agent at Gretchen Autonomous Game Studio.\n"
-            "We are building a generative 3D street driving & physics-aware MuJoCo vehicle game where the player can request ANY world theme "
-            "(e.g., medieval cobblestone kingdom, cyberpunk neon downtown, desert canyon convoy, arctic glacier outpost) and a compelling story plot.\n"
+            "We are building a generative 3D street driving & physics-aware MuJoCo vehicle/robot game where the player can request ANY world theme "
+            "(e.g., medieval cobblestone kingdom, cyberpunk neon downtown, desert canyon convoy, arctic glacier outpost), upgrades/skins, "
+            "AND Transformers-style MuJoCo robot morphs ('rover_car', 'bipedal_mech', 'quadruped_crawler', 'siege_tank').\n"
             "Given a client prompt, output ONLY valid JSON with keys:\n"
             '  "project_id": string,\n'
             '  "level_index": integer,\n'
             '  "game_title": string,\n'
-            '  "plot_summary": string (2-3 exciting sentences setting up the story plot and why the road ahead is perilous),\n'
-            '  "theme": string (e.g. "medieval_cobblestone_kingdom", "neon_downtown_avenue", "wasteland_convoy_canyon", "arctic_glacier_outpost"),\n'
+            '  "plot_summary": string,\n'
+            '  "theme": string,\n'
             '  "objective": string,\n'
             '  "environmental_hazard": string,\n'
             '  "required_capability": string,\n'
@@ -165,10 +214,12 @@ class StudioDirectorAgent:
             '    "sky_color": [r, g, b],\n'
             '    "building_style": "medieval_keep" | "cyber_skyscraper" | "desert_mesa" | "arctic_dome",\n'
             '    "prop_style": "torch_post" | "streetlamp" | "cryo_pylon",\n'
+            '    "soundtrack_style": string,\n'
             '    "has_center_dashes": boolean\n'
             '  },\n'
             '  "car_design": {\n'
             '    "body_style": "street_muscle" | "armored_crawler" | "medieval_wagon" | "cyber_interceptor",\n'
+            '    "robot_form": "rover_car" | "bipedal_mech" | "quadruped_crawler" | "siege_tank",\n'
             '    "primary_color": [r, g, b],\n'
             '    "accent_color": [r, g, b],\n'
             '    "wheel_scale": 1.0,\n'
@@ -176,6 +227,7 @@ class StudioDirectorAgent:
             '    "roof_attachment": "m3_servo_arm" | "battering_ram" | "twin_turbo"\n'
             '  },\n'
             '  "car_physics": {\n'
+            '    "robot_form": "rover_car" | "bipedal_mech" | "quadruped_crawler" | "siege_tank",\n'
             '    "chassis_mass_kg": 4.5,\n'
             '    "wheel_friction": 1.35,\n'
             '    "motor_torque_nm": 4.0,\n'
@@ -194,24 +246,31 @@ class StudioDirectorAgent:
             f"\nClient Prompt: {user_prompt}\nProject ID: {project_id}\nLevel Index: {level_index}"
         )
 
-        if self.api_key and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here"):
+        if (
+            self.exec_mode != "local_fast"
+            and self.api_key
+            and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here")
+        ):
             try:
                 from google import genai
 
                 client = genai.Client(api_key=self.api_key)
-                if self.use_managed_agent:
+                use_remote = self.exec_mode == "managed_agent" or (
+                    self.exec_mode == "auto" and self.use_managed_agent
+                )
+                if use_remote:
                     interaction = client.interactions.create(
-                        agent="antigravity-preview-09-2026",
+                        agent=self.managed_agent_id,
                         agent_config={
-                            "type": "antigravity",
-                            "model": "gemini-4-argon",
+                            "type": self.managed_agent_type,
+                            "model": self.model_id,
                         },
                         input=system_directive,
                         environment="remote",
                     )
                 else:
                     interaction = client.interactions.create(
-                        model="gemini-4-argon",
+                        model=self.model_id,
                         input=system_directive,
                         generation_config={"thinking_level": "low"},
                     )
@@ -225,6 +284,8 @@ class StudioDirectorAgent:
                     parsed.setdefault("plot_summary", preset["plot_summary"])
                     parsed.setdefault("environment_style", preset["environment_style"])
                     parsed.setdefault("car_design", preset["car_design"])
+                    parsed["car_design"].setdefault("robot_form", robot_form)
+                    parsed["car_physics"].setdefault("robot_form", robot_form)
                     return parsed
             except Exception as exc:
                 print(f"[DirectorAgent] Fallback triggered ({exc})")
@@ -242,6 +303,7 @@ class StudioDirectorAgent:
             "environment_style": preset["environment_style"],
             "car_design": preset["car_design"],
             "car_physics": {
+                "robot_form": robot_form,
                 "chassis_mass_kg": 4.5,
                 "wheel_friction": 1.35,
                 "motor_torque_nm": 4.0,

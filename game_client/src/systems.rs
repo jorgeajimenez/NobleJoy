@@ -5,7 +5,7 @@ use crate::components::{
 };
 use crate::gbuffer_detector::run_gbuffer_compute_audit;
 use crate::level_builder::{
-    apply_hotfix_deltas, spawn_level_from_contract, spawn_player_car_entity,
+    apply_hotfix_deltas, rebuild_player_car_in_place, spawn_level_from_contract,
 };
 use crate::network::{
     request_commission_level, request_export_build, request_mujoco_step, request_qa_audit,
@@ -22,7 +22,37 @@ use bevy::render::view::screenshot::ScreenshotManager;
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 
-pub fn build_contract_from_prompt(user_prompt: &str, level_index: u32) -> LevelContract {
+pub fn infer_robot_form_from_prompt(p: &str) -> Option<String> {
+    if p.contains("mech")
+        || p.contains("biped")
+        || p.contains("humanoid")
+        || p.contains("optimus")
+        || p.contains("transformer")
+        || p.contains("walker")
+    {
+        Some("bipedal_mech".to_string())
+    } else if p.contains("spider")
+        || p.contains("quadruped")
+        || p.contains("4-leg")
+        || p.contains("four leg")
+        || p.contains("hound")
+        || p.contains("dog")
+    {
+        Some("quadruped_crawler".to_string())
+    } else if p.contains("tank") || p.contains("tread") || p.contains("tracked") {
+        Some("siege_tank".to_string())
+    } else if p.contains("rover") || p.contains("car") || p.contains("wagon") {
+        Some("rover_car".to_string())
+    } else {
+        None
+    }
+}
+
+pub fn build_contract_from_prompt(
+    user_prompt: &str,
+    level_index: u32,
+    fallback_robot_form: &str,
+) -> LevelContract {
     let p = user_prompt.to_lowercase();
     let is_medieval = p.contains("medieval")
         || p.contains("castle")
@@ -45,110 +75,142 @@ pub fn build_contract_from_prompt(user_prompt: &str, level_index: u32) -> LevelC
         || p.contains("cryo")
         || p.contains("frozen");
 
-    let (theme, game_title, plot_summary, objective, hazard, env_style, car_design) = if is_medieval
-    {
-        (
-            "medieval_cobblestone_kingdom".to_string(),
-            "Chronicles of Iron & Cobble".to_string(),
-            format!(
-                "Chapter {level_index}: Lord Malakor has lowered the Iron Portcullis across King's Cobblestone Road. \
-                 Drive the Royal Siege Wagon past the timber taverns & castle keeps, run [Q] QA to raise the gate, \
-                 and deliver the Dragon Relic to the Citadel Sanctuary."
-            ),
-            "Drive down King's Cobblestone Road, clear the Iron Portcullis, and reach the Citadel Sanctuary."
-                .to_string(),
-            "iron_portcullis_gate_blockade".to_string(),
-            EnvironmentStyleSpec {
-                ground_color: [0.16, 0.26, 0.14],
-                road_color: [0.36, 0.32, 0.27],
-                sidewalk_color: [0.48, 0.45, 0.40],
-                sky_color: [0.14, 0.17, 0.24],
-                building_style: "medieval_keep".to_string(),
-                prop_style: "torch_post".to_string(),
-                has_center_dashes: false,
-            },
-            CarDesignSpec {
-                body_style: "medieval_wagon".to_string(),
-                primary_color: [0.58, 0.36, 0.16],
-                accent_color: [0.85, 0.68, 0.20],
-                wheel_scale: 1.15,
-                ride_height: 0.04,
-                roof_attachment: "battering_ram".to_string(),
-            },
-        )
-    } else if is_desert {
-        (
-            "wasteland_convoy_canyon".to_string(),
-            "Mad Torque: Red Dust Run".to_string(),
-            format!(
-                "Chapter {level_index}: Scavenger clans sealed Fury Canyon with a rusted scrap-metal wall. \
-                 Engage 4WD crawler lock, weave between sandstone mesas, and deliver the fuel core."
-            ),
-            "Blast through the red-rock canyon trail, clear the scrap barricade, and reach the Refinery Beacon."
-                .to_string(),
-            "rusted_scrap_wall_barricade".to_string(),
-            EnvironmentStyleSpec {
-                ground_color: [0.58, 0.31, 0.16],
-                road_color: [0.44, 0.25, 0.14],
-                sidewalk_color: [0.66, 0.39, 0.22],
-                sky_color: [0.32, 0.18, 0.12],
-                building_style: "desert_mesa".to_string(),
-                prop_style: "torch_post".to_string(),
-                has_center_dashes: false,
-            },
-            CarDesignSpec {
-                body_style: "armored_crawler".to_string(),
-                primary_color: [0.82, 0.42, 0.15],
-                accent_color: [0.22, 0.22, 0.24],
-                wheel_scale: 1.30,
-                ride_height: 0.08,
-                roof_attachment: "m3_servo_arm".to_string(),
-            },
-        )
-    } else if is_arctic {
-        (
-            "arctic_glacier_outpost".to_string(),
-            "Cryo-Drive: Subzero Protocol".to_string(),
-            format!(
-                "Chapter {level_index}: A glacial shear triggered an ice-wall blockade across Sector Zero Causeway. \
-                 Pilot the thermal interceptor between geodesic cryo-domes to re-ignite the fusion beacon."
-            ),
-            "Navigate the frozen causeway, clear the glacial ice blockade, and reach the Fusion Core."
-                .to_string(),
-            "glacial_ice_wall_blockade".to_string(),
-            EnvironmentStyleSpec {
-                ground_color: [0.82, 0.90, 0.96],
-                road_color: [0.45, 0.65, 0.82],
-                sidewalk_color: [0.72, 0.84, 0.92],
-                sky_color: [0.10, 0.18, 0.28],
-                building_style: "arctic_dome".to_string(),
-                prop_style: "cryo_pylon".to_string(),
-                has_center_dashes: true,
-            },
-            CarDesignSpec {
-                body_style: "cyber_interceptor".to_string(),
-                primary_color: [0.92, 0.96, 1.0],
-                accent_color: [0.10, 0.78, 0.98],
-                wheel_scale: 1.20,
-                ride_height: 0.05,
-                roof_attachment: "twin_turbo".to_string(),
-            },
-        )
-    } else {
-        (
-            "neon_downtown_avenue".to_string(),
-            "Neon Overdrive 2099".to_string(),
-            format!(
-                "Chapter {level_index} ('{user_prompt}'): CorpSec locked down Main Cyber Avenue with a plasma blast door. \
-                 Thread the needle through downtown skyscrapers, run [Q] WGPU QA to clear the blockade, and reach the Beacon."
-            ),
-            "Drive down Main Cyber Avenue through the skyscraper blocks to reach the Extraction Beacon."
-                .to_string(),
-            "mid_avenue_blast_door_blockade".to_string(),
-            EnvironmentStyleSpec::default(),
-            CarDesignSpec::default(),
-        )
-    };
+    let robot_form =
+        infer_robot_form_from_prompt(&p).unwrap_or_else(|| fallback_robot_form.to_string());
+
+    let (theme, game_title, plot_summary, objective, hazard, env_style, mut car_design) =
+        if is_medieval {
+            (
+                "medieval_cobblestone_kingdom".to_string(),
+                "Chronicles of Iron & Cobble".to_string(),
+                format!(
+                    "Chapter {level_index}: Lord Malakor has lowered the Iron Portcullis across King's Cobblestone Road. \
+                     Drive the Royal Siege Wagon past the timber taverns & castle keeps, run [Q] QA to raise the gate, \
+                     and deliver the Dragon Relic to the Citadel Sanctuary."
+                ),
+                "Drive down King's Cobblestone Road, clear the Iron Portcullis, and reach the Citadel Sanctuary."
+                    .to_string(),
+                "iron_portcullis_gate_blockade".to_string(),
+                EnvironmentStyleSpec {
+                    ground_color: [0.16, 0.26, 0.14],
+                    road_color: [0.36, 0.32, 0.27],
+                    sidewalk_color: [0.48, 0.45, 0.40],
+                    sky_color: [0.14, 0.17, 0.24],
+                    building_style: "medieval_keep".to_string(),
+                    prop_style: "torch_post".to_string(),
+                    soundtrack_style: "medieval_lute_march".to_string(),
+                    has_center_dashes: false,
+                },
+                CarDesignSpec {
+                    body_style: "medieval_wagon".to_string(),
+                    robot_form: robot_form.clone(),
+                    primary_color: [0.58, 0.36, 0.16],
+                    accent_color: [0.85, 0.68, 0.20],
+                    wheel_scale: 1.15,
+                    ride_height: 0.04,
+                    roof_attachment: "battering_ram".to_string(),
+                },
+            )
+        } else if is_desert {
+            (
+                "wasteland_convoy_canyon".to_string(),
+                "Mad Torque: Red Dust Run".to_string(),
+                format!(
+                    "Chapter {level_index}: Scavenger clans sealed Fury Canyon with a rusted scrap-metal wall. \
+                     Engage 4WD crawler lock, weave between sandstone mesas, and deliver the fuel core."
+                ),
+                "Blast through the red-rock canyon trail, clear the scrap barricade, and reach the Refinery Beacon."
+                    .to_string(),
+                "rusted_scrap_wall_barricade".to_string(),
+                EnvironmentStyleSpec {
+                    ground_color: [0.58, 0.31, 0.16],
+                    road_color: [0.44, 0.25, 0.14],
+                    sidewalk_color: [0.66, 0.39, 0.22],
+                    sky_color: [0.32, 0.18, 0.12],
+                    building_style: "desert_mesa".to_string(),
+                    prop_style: "torch_post".to_string(),
+                    soundtrack_style: "wasteland_percussion_drone".to_string(),
+                    has_center_dashes: false,
+                },
+                CarDesignSpec {
+                    body_style: "armored_crawler".to_string(),
+                    robot_form: robot_form.clone(),
+                    primary_color: [0.82, 0.42, 0.15],
+                    accent_color: [0.22, 0.22, 0.24],
+                    wheel_scale: 1.30,
+                    ride_height: 0.08,
+                    roof_attachment: "m3_servo_arm".to_string(),
+                },
+            )
+        } else if is_arctic {
+            (
+                "arctic_glacier_outpost".to_string(),
+                "Cryo-Drive: Subzero Protocol".to_string(),
+                format!(
+                    "Chapter {level_index}: A glacial shear triggered an ice-wall blockade across Sector Zero Causeway. \
+                     Pilot the thermal interceptor between geodesic cryo-domes to re-ignite the fusion beacon."
+                ),
+                "Navigate the frozen causeway, clear the glacial ice blockade, and reach the Fusion Core."
+                    .to_string(),
+                "glacial_ice_wall_blockade".to_string(),
+                EnvironmentStyleSpec {
+                    ground_color: [0.82, 0.90, 0.96],
+                    road_color: [0.45, 0.65, 0.82],
+                    sidewalk_color: [0.72, 0.84, 0.92],
+                    sky_color: [0.10, 0.18, 0.28],
+                    building_style: "arctic_dome".to_string(),
+                    prop_style: "cryo_pylon".to_string(),
+                    soundtrack_style: "cryo_crystal_arp".to_string(),
+                    has_center_dashes: true,
+                },
+                CarDesignSpec {
+                    body_style: "cyber_interceptor".to_string(),
+                    robot_form: robot_form.clone(),
+                    primary_color: [0.92, 0.96, 1.0],
+                    accent_color: [0.10, 0.78, 0.98],
+                    wheel_scale: 1.20,
+                    ride_height: 0.05,
+                    roof_attachment: "twin_turbo".to_string(),
+                },
+            )
+        } else {
+            let mut default_car = CarDesignSpec::default();
+            default_car.robot_form = robot_form.clone();
+            (
+                "neon_downtown_avenue".to_string(),
+                "Neon Overdrive 2099".to_string(),
+                format!(
+                    "Chapter {level_index} ('{user_prompt}'): CorpSec locked down Main Cyber Avenue with a plasma blast door. \
+                     Thread the needle through downtown skyscrapers, run [Q] WGPU QA to clear the blockade, and reach the Beacon."
+                ),
+                "Drive down Main Cyber Avenue through the skyscraper blocks to reach the Extraction Beacon."
+                    .to_string(),
+                "mid_avenue_blast_door_blockade".to_string(),
+                EnvironmentStyleSpec::default(),
+                default_car,
+            )
+        };
+
+    // Prompt-driven live upgrade / skin / paint overrides
+    if p.contains("gold") || p.contains("royal") {
+        car_design.primary_color = [0.90, 0.72, 0.18];
+        car_design.accent_color = [0.98, 0.92, 0.55];
+    } else if p.contains("crimson") || p.contains("red") || p.contains("flame") {
+        car_design.primary_color = [0.88, 0.14, 0.18];
+        car_design.accent_color = [1.0, 0.65, 0.12];
+    } else if p.contains("stealth") || p.contains("black") || p.contains("obsidian") {
+        car_design.primary_color = [0.12, 0.13, 0.16];
+        car_design.accent_color = [0.10, 0.95, 0.55];
+    }
+    if p.contains("ram") || p.contains("plow") {
+        car_design.roof_attachment = "battering_ram".to_string();
+    } else if p.contains("turbo") || p.contains("boost") {
+        car_design.roof_attachment = "twin_turbo".to_string();
+    }
+    if p.contains("monster") || p.contains("big wheel") || p.contains("lifted") {
+        car_design.wheel_scale = 1.35;
+        car_design.ride_height = 0.09;
+    }
 
     let goal_x = 38.0 + (level_index.saturating_sub(1) as f32) * 8.0;
     let mut bounds = HashMap::new();
@@ -258,6 +320,7 @@ pub fn build_contract_from_prompt(user_prompt: &str, level_index: u32) -> LevelC
         environmental_hazard: hazard,
         required_capability: "high_torque_4wd + modular_m3_mount".to_string(),
         skin_url: String::new(),
+        music_url: None,
         mjcf_url: String::new(),
         urdf_url: String::new(),
         stl_url: String::new(),
@@ -366,8 +429,9 @@ pub fn setup_base_environment(
             ));
         });
 
-    let initial_prompt = session.prompt_input.clone();
-    let preview = build_contract_from_prompt(&initial_prompt, 1);
+    // Launch directly in Neon Cyberpunk 2099 (while `session.prompt_input` holds "take me to medieval times" ready for [Tab] -> [Enter]!)
+    let initial_prompt = session.last_prompt.clone();
+    let preview = build_contract_from_prompt(&initial_prompt, 1, "rover_car");
     let [sr, sg, sb] = preview.environment_style.sky_color;
     clear_color.0 = Color::srgb(sr, sg, sb);
 
@@ -380,37 +444,11 @@ pub fn setup_base_environment(
         &mut session,
         &preview,
         None,
+        None,
+        false,
     );
 
-    request_commission_level(&net, initial_prompt, 1);
-}
-
-fn rebuild_player_car_in_place(
-    commands: &mut Commands,
-    asset_server: &Res<AssetServer>,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    player_query: &Query<(Entity, &StudioEntity, &Transform)>,
-    session: &GameSessionState,
-) {
-    let mut current_pos = Vec3::new(0.0, 0.35, 0.0);
-    for (ent, studio_ent, tf) in player_query.iter() {
-        if studio_ent.role == EntityRole::Player {
-            current_pos = Vec3::new(tf.translation.x, 0.35, tf.translation.z);
-            commands.entity(ent).despawn_recursive();
-        }
-    }
-    spawn_player_car_entity(
-        commands,
-        asset_server,
-        meshes,
-        materials,
-        current_pos,
-        session.rover_yaw,
-        1.0,
-        &session.car_design,
-        &session.downloaded_skin_asset,
-    );
+    request_commission_level(&net, initial_prompt, 1, false);
 }
 
 pub fn handle_studio_hotkeys(
@@ -419,7 +457,6 @@ pub fn handle_studio_hotkeys(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     existing_entities: Query<Entity, With<StudioEntity>>,
-    player_entity_query: Query<(Entity, &StudioEntity, &Transform)>,
     mut transform_query: Query<(Entity, &StudioEntity, &mut Transform)>,
     keys: Res<ButtonInput<KeyCode>>,
     mut key_evr: EventReader<KeyboardInput>,
@@ -435,7 +472,7 @@ pub fn handle_studio_hotkeys(
         session.active_project_id.clone()
     };
 
-    // Toggle Welcome / AI Studio Prompt Menu with Tab or Escape
+    // Toggle Welcome / AI Studio Live Prompt Bar with Tab or Escape
     if keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::Escape) {
         session.ui_mode = match session.ui_mode {
             UiMode::WelcomeStudio => UiMode::Driving,
@@ -445,7 +482,7 @@ pub fn handle_studio_hotkeys(
         return;
     }
 
-    // Quick-Preset Theme Generators (F1 / F2 / F3 / F4) work in ANY mode!
+    // Quick-Preset Theme Generators (F1 / F2 / F3 / F4) work in ANY mode and morph scenery IN-PLACE!
     let preset_prompt = if keys.just_pressed(KeyCode::F1) {
         Some("Medieval cobblestone castle streets with dragon portcullis gate, timber taverns, torches, and royal siege wagon")
     } else if keys.just_pressed(KeyCode::F2) {
@@ -461,8 +498,9 @@ pub fn handle_studio_hotkeys(
     if let Some(p_str) = preset_prompt {
         session.prompt_input = p_str.to_string();
         session.last_prompt = p_str.to_string();
-        session.current_level = 1;
-        let preview = build_contract_from_prompt(p_str, 1);
+        let current_lvl = session.current_level.max(1);
+        let current_robot = session.car_design.robot_form.clone();
+        let preview = build_contract_from_prompt(p_str, current_lvl, &current_robot);
         let [sr, sg, sb] = preview.environment_style.sky_color;
         clear_color.0 = Color::srgb(sr, sg, sb);
         spawn_level_from_contract(
@@ -474,17 +512,19 @@ pub fn handle_studio_hotkeys(
             &mut session,
             &preview,
             None,
+            None,
+            true,
         );
         session.ui_mode = UiMode::Driving;
         session.status_banner = format!(
-            "Generated '{}' (Lvl 1) | Streaming to Gretchen Backend Agent...",
+            "Live Scene Morph -> '{}' | Streaming Soundtrack & Skin from Gretchen Studio...",
             session.game_title
         );
-        request_commission_level(&net, p_str.to_string(), 1);
+        request_commission_level(&net, p_str.to_string(), current_lvl, true);
         return;
     }
 
-    // Handle typing inside the Welcome / AI Studio Prompt Box
+    // Handle typing inside the Live AI Studio Prompt Box
     if session.ui_mode == UiMode::WelcomeStudio {
         for ev in key_evr.read() {
             if ev.state != ButtonState::Pressed {
@@ -501,8 +541,10 @@ pub fn handle_studio_hotkeys(
                         session.prompt_input.trim().to_string()
                     };
                     session.last_prompt = prompt_to_send.clone();
-                    session.current_level = 1;
-                    let preview = build_contract_from_prompt(&prompt_to_send, 1);
+                    let current_lvl = session.current_level.max(1);
+                    let current_robot = session.car_design.robot_form.clone();
+                    let preview =
+                        build_contract_from_prompt(&prompt_to_send, current_lvl, &current_robot);
                     let [sr, sg, sb] = preview.environment_style.sky_color;
                     clear_color.0 = Color::srgb(sr, sg, sb);
                     spawn_level_from_contract(
@@ -514,13 +556,15 @@ pub fn handle_studio_hotkeys(
                         &mut session,
                         &preview,
                         None,
+                        None,
+                        true,
                     );
                     session.ui_mode = UiMode::Driving;
                     session.status_banner = format!(
-                        "Commissioning AI Agent for '{}' -> {} (Lvl 1)...",
+                        "Live Scene Morph: '{}' -> {} (Preserving Physics & Pose)...",
                         prompt_to_send, session.game_title
                     );
-                    request_commission_level(&net, prompt_to_send, 1);
+                    request_commission_level(&net, prompt_to_send, current_lvl, true);
                     return;
                 }
                 _ => {
@@ -548,6 +592,34 @@ pub fn handle_studio_hotkeys(
         };
         return;
     }
+
+    // Helper closure to despawn & respawn the player robot/car at `session.player_pos`
+    let respawn_player_at_current_pose =
+        |commands: &mut Commands,
+         asset_server: &Res<AssetServer>,
+         meshes: &mut ResMut<Assets<Mesh>>,
+         materials: &mut ResMut<Assets<StandardMaterial>>,
+         transform_query: &Query<(Entity, &StudioEntity, &mut Transform)>,
+         session: &GameSessionState| {
+            let mut pos = session.player_pos;
+            for (ent, studio_ent, tf) in transform_query.iter() {
+                if studio_ent.role == EntityRole::Player {
+                    pos = tf.translation;
+                    commands.entity(ent).despawn_recursive();
+                }
+            }
+            crate::level_builder::spawn_player_car_entity(
+                commands,
+                asset_server,
+                meshes,
+                materials,
+                pos,
+                session.rover_yaw,
+                1.0,
+                &session.car_design,
+                &session.downloaded_skin_asset,
+            );
+        };
 
     // Handle Car Designer Showroom Controls
     if session.ui_mode == UiMode::CarDesigner {
@@ -610,7 +682,26 @@ pub fn handle_studio_hotkeys(
                     session.last_prompt, session.car_design.body_style
                 ),
                 session.current_level,
+                true,
             );
+        }
+        if keys.just_pressed(KeyCode::Digit6) || keys.just_pressed(KeyCode::KeyT) {
+            let next_form = match session.car_design.robot_form.as_str() {
+                "rover_car" => "bipedal_mech",
+                "bipedal_mech" => "quadruped_crawler",
+                "quadruped_crawler" => "siege_tank",
+                _ => "rover_car",
+            };
+            session.car_design.robot_form = next_form.to_string();
+            request_mujoco_step(
+                &net,
+                project_id.clone(),
+                0.0,
+                0.0,
+                None,
+                Some(next_form.to_string()),
+            );
+            car_changed = true;
         }
         if keys.just_pressed(KeyCode::Enter) {
             session.ui_mode = UiMode::Driving;
@@ -618,16 +709,17 @@ pub fn handle_studio_hotkeys(
         }
 
         if car_changed {
-            rebuild_player_car_in_place(
+            respawn_player_at_current_pose(
                 &mut commands,
                 &asset_server,
                 &mut meshes,
                 &mut materials,
-                &player_entity_query,
+                &transform_query,
                 &session,
             );
             session.status_banner = format!(
-                "Car Designer Updated: Body [{}] | Wheels {:.2}x | Attachment [{}]",
+                "Showroom Updated: Robot [{}] | Body [{}] | Wheels {:.2}x | Attachment [{}]",
+                session.car_design.robot_form,
                 session.car_design.body_style,
                 session.car_design.wheel_scale,
                 session.car_design.roof_attachment
@@ -636,13 +728,45 @@ pub fn handle_studio_hotkeys(
         return;
     }
 
-    // Driving Mode Hotkeys:
-    // [N] Generate Next Campaign Level
+    // === DRIVING MODE HOTKEYS ===
+    // [T] TRANSFORMERS-STYLE MUJOCO ROBOT MORPH (Car <-> Bipedal Mech <-> Spider Quadruped <-> Siege Tank)
+    if keys.just_pressed(KeyCode::KeyT) {
+        let next_form = match session.car_design.robot_form.as_str() {
+            "rover_car" => "bipedal_mech",
+            "bipedal_mech" => "quadruped_crawler",
+            "quadruped_crawler" => "siege_tank",
+            _ => "rover_car",
+        };
+        session.car_design.robot_form = next_form.to_string();
+        respawn_player_at_current_pose(
+            &mut commands,
+            &asset_server,
+            &mut meshes,
+            &mut materials,
+            &transform_query,
+            &session,
+        );
+        session.status_banner = format!(
+            "TRANSFORMERS MORPH -> MuJoCo Robot Form [{}] (Pose & Physics Preserved!)",
+            next_form.to_uppercase()
+        );
+        request_mujoco_step(
+            &net,
+            project_id.clone(),
+            0.0,
+            0.0,
+            None,
+            Some(next_form.to_string()),
+        );
+    }
+
+    // [N] Generate Next Campaign Level (resets to start of next sector)
     if keys.just_pressed(KeyCode::KeyN) {
         session.current_level += 1;
         let next_lvl = session.current_level;
         let prompt = session.last_prompt.clone();
-        let preview = build_contract_from_prompt(&prompt, next_lvl);
+        let current_robot = session.car_design.robot_form.clone();
+        let preview = build_contract_from_prompt(&prompt, next_lvl, &current_robot);
         let [sr, sg, sb] = preview.environment_style.sky_color;
         clear_color.0 = Color::srgb(sr, sg, sb);
         spawn_level_from_contract(
@@ -654,12 +778,14 @@ pub fn handle_studio_hotkeys(
             &mut session,
             &preview,
             None,
+            None,
+            false,
         );
         session.status_banner = format!(
             "Advancing Campaign -> {} Level {}! Commissioning Gretchen Architect...",
             session.game_title, next_lvl
         );
-        request_commission_level(&net, prompt, next_lvl);
+        request_commission_level(&net, prompt, next_lvl, false);
     }
 
     // [Q] Run WGPU Compute G-Buffer Artifact Detector (`artifact_detector.wgsl`) + Visual QA Roadblock Hotfix
@@ -667,7 +793,6 @@ pub fn handle_studio_hotkeys(
         let snap_path = capture_viewport_to_disk(&main_window, &mut screenshot_manager);
         let audit = run_gbuffer_compute_audit(!session.qa_cleaned);
 
-        // Despawn coplanar Z-fighting artifact patch & shift central roadblock onto the sidewalk (z = 6.5)
         for (entity, studio_ent, mut tf) in transform_query.iter_mut() {
             if studio_ent.role == EntityRole::ZFightArtifact {
                 commands.entity(entity).despawn_recursive();
@@ -727,6 +852,7 @@ pub fn handle_studio_hotkeys(
             0.0,
             0.0,
             Some(session.upgrade_equipped),
+            None,
         );
     }
 
@@ -755,6 +881,8 @@ pub fn poll_studio_network_events(
             StudioNetEvent::LevelCommissioned {
                 contract,
                 local_skin_asset,
+                local_music_asset,
+                preserve_pose,
             } => {
                 let [sr, sg, sb] = contract.environment_style.sky_color;
                 clear_color.0 = Color::srgb(sr, sg, sb);
@@ -767,14 +895,18 @@ pub fn poll_studio_network_events(
                     &mut session,
                     &contract,
                     local_skin_asset,
+                    local_music_asset,
+                    preserve_pose,
                 );
             }
             StudioNetEvent::CommissionFallback {
                 prompt,
                 level_index,
+                preserve_pose,
                 reason: _,
             } => {
-                let contract = build_contract_from_prompt(&prompt, level_index);
+                let current_robot = session.car_design.robot_form.clone();
+                let contract = build_contract_from_prompt(&prompt, level_index, &current_robot);
                 let [sr, sg, sb] = contract.environment_style.sky_color;
                 clear_color.0 = Color::srgb(sr, sg, sb);
                 spawn_level_from_contract(
@@ -786,6 +918,8 @@ pub fn poll_studio_network_events(
                     &mut session,
                     &contract,
                     None,
+                    None,
+                    preserve_pose,
                 );
             }
             StudioNetEvent::MujocoStepCompleted(step) => {
@@ -850,10 +984,11 @@ pub fn player_movement_and_collision(
     if keys.just_pressed(KeyCode::KeyR) {
         session.rover_yaw = 0.0;
         session.rover_speed = 0.0;
+        let reset_pos = Vec3::new(0.0, 0.35 + session.car_design.ride_height, 0.0);
+        session.player_pos = reset_pos;
         for (ent, mut transform) in query.iter_mut() {
             if ent.role == EntityRole::Player {
-                transform.translation =
-                    Vec3::new(0.0, 0.35 + session.car_design.ride_height, 0.0);
+                transform.translation = reset_pos;
                 transform.rotation = Quat::from_rotation_y(session.rover_yaw);
                 session.victory = false;
             }
@@ -871,6 +1006,7 @@ pub fn player_movement_and_collision(
             session.active_project_id.clone(),
             throttle,
             steering,
+            None,
             None,
         );
     }
@@ -978,6 +1114,8 @@ pub fn player_movement_and_collision(
         session.rover_speed = -session.rover_speed * 0.35;
     }
 
+    session.player_pos = resolved_pos;
+
     for (ent, mut transform) in query.iter_mut() {
         if ent.role == EntityRole::Player {
             transform.rotation = Quat::from_rotation_y(session.rover_yaw);
@@ -1016,7 +1154,7 @@ pub fn update_gta_chase_camera(
     };
 
     if session.ui_mode == UiMode::CarDesigner {
-        // 360-degree Showroom Orbit Camera around the car
+        // 360-degree Showroom Orbit Camera around the car/robot
         session.showroom_orbit_angle += time.delta_seconds() * 0.65;
         let radius = 3.8;
         let cam_x = player_tf.translation.x - session.showroom_orbit_angle.cos() * radius;
@@ -1052,15 +1190,16 @@ pub fn update_hud_overlay(
 
     for mut text in hud_query.iter_mut() {
         text.sections[0].value = format!(
-            "{} — Level {} [{}] | Speed: {:.1} m/s | Car: {} | CoM: {} | Torque: {:.1}/{:.1} kg*cm [{}]\n\
+            "{} — Lvl {} [{}] | Speed: {:.1} m/s | Robot: [{}] ({}) | Music: [{}] | Torque: {:.1}/{:.1} kg*cm [{}]\n\
              WGPU G-Buffer QA: {} | {}\n\
-             [Tab] AI Game Generator Menu | [V] 3D Car Designer | [F1] Medieval | [F2] Cyber | [F3] Desert | [F4] Arctic | [Q] QA Fix | [N] Next Level",
+             [Tab] Live Prompt (\"take me to medieval times\") | [T] Morph Robot | [V] Car Designer | [F1-F4] Worlds | [Q] QA Fix | [N] Next Lvl",
             session.game_title,
             session.current_level,
             session.theme,
             session.speed_mps,
+            session.car_design.robot_form,
             session.car_design.body_style,
-            com_badge,
+            session.environment_style.soundtrack_style,
             sc.required_torque_kg_cm,
             sc.rated_torque_kg_cm,
             torque_badge,
@@ -1080,41 +1219,45 @@ pub fn update_hud_overlay(
         match session.ui_mode {
             UiMode::WelcomeStudio => {
                 modal_text.sections[0].value = format!(
-                    "=== ARGON GAME STUDIO — AI WORLD & LEVEL GENERATOR ===\n\n\
-                     CURRENT GAME: {} (Campaign Level {})\n\
-                     STORY PLOT: {}\n\
-                     OBJECTIVE: {}\n\n\
-                     TALK TO GRETCHEN STUDIO AGENT (Type your game/world idea below):\n\
+                    "=== ARGON GAME STUDIO — LIVE IN-GAME SCENE, SKIN & ROBOT PROMPT BAR ===\n\n\
+                     ACTIVE SCENE : {} (Level {} | Theme: {} | Music: {})\n\
+                     ROBOT / CAR  : {} ({}) | Street Pose Preserved on Scene Swap!\n\
+                     STORY PLOT   : {}\n\n\
+                     LIVE PROMPT TO FASTAPI STUDIO AGENT (Type scenery, upgrade, skin, or robot morph):\n\
                      > {}_\n\n\
-                     [ENTER] Generate Game World, Plot & Street Level from Prompt\n\
-                     [F1] Medieval Cobblestone Kingdom (Castles, Taverns, Torches, Siege Wagon)\n\
-                     [F2] Neon Cyber-City 2099 (Skyscrapers, Wet Asphalt, Cyber Muscle)\n\
-                     [F3] Desert Wasteland Canyon (Red-Rock Mesas, 4WD Armored Crawler)\n\
-                     [F4] Arctic Glacier Outpost (Frozen Highway, Cryo Domes, Thermal Rover)\n\
-                     [V]  Open Interactive 3D Car Designer Showroom\n\
-                     [TAB / ESC] Close Menu & Drive Now",
+                     [ENTER] Morph Scene, Music, Assets & Skin In-Place (Physics & Position Stay Continuous!)\n\
+                     Try typing: \"take me to medieval times\" | \"transform into a bipedal mech\" | \"gold dragon skin with monster wheels\"\n\
+                     [F1] Medieval Kingdom  | [F2] Cyberpunk 2099  | [F3] Desert Canyon  | [F4] Arctic Glacier\n\
+                     [T]  Transformers Robot Morph (Rover Car <-> Bipedal Mech <-> Spider Quadruped <-> Siege Tank)\n\
+                     [V]  Open Interactive 3D Car & Robot Designer Showroom   |   [TAB / ESC] Resume Driving",
                     session.game_title,
                     session.current_level,
+                    session.theme,
+                    session.environment_style.soundtrack_style,
+                    session.car_design.robot_form,
+                    session.car_design.body_style,
                     session.plot_summary,
-                    session.objective,
                     session.prompt_input
                 );
             }
             UiMode::CarDesigner => {
                 modal_text.sections[0].value = format!(
-                    "=== INTERACTIVE 3D CAR DESIGNER & MUJOCO TUNING STUDIO ===\n\n\
+                    "=== INTERACTIVE 3D CAR & TRANSFORMERS ROBOT DESIGNER (MUJOCO STUDIO) ===\n\n\
+                     MuJoCo Robot Form    : [{}] (Press [6] or [T] to Transform!)\n\
                      Active Chassis Style : [{}]\n\
                      Wheel Scale & Lift   : [{:.2}x | Ride Height {:+.2}m]\n\
                      Hardware Attachment  : [{}]\n\
                      AI Skin Texture      : [{}]\n\
                      MuJoCo Physics Gate  : Drive Torque {:.1} N*m | Servo {:.1}/{:.1} kg*cm | CoM {}\n\n\
-                     CUSTOMIZE YOUR VEHICLE (Live 3D Preview):\n\
+                     CUSTOMIZE YOUR VEHICLE / ROBOT (Live 3D Orbit Preview):\n\
                      [1] Cycle Chassis Body (Street Muscle / Medieval Siege Wagon / Armored 4WD Crawler / Cyber Interceptor)\n\
                      [2] Cycle Paint & Trim Palette (Cyber Cyan / Medieval Oak & Gold / Crimson GT / Stealth Obsidian / Wasteland Copper)\n\
                      [3] Cycle Wheel Size & Suspension Lift (Standard 1.0x / Monster Crawler 1.32x / Lowrider Drift 0.86x)\n\
                      [4] Cycle Roof/Front Hardware (M3 Servo Arm / Iron Battering Ram / Twin Turbo Supercharger)\n\
-                     [5] Generate Custom AI PBR Skin with Gemini Nano Banana 2.1\n\
-                     [ENTER / V / TAB] Save Vehicle & Return to Street Driving",
+                     [5] Generate Custom AI PBR Skin from FastAPI Studio (Nano Banana 2.1 / Local Synth)\n\
+                     [6 / T] Transform MuJoCo Robot Morphology (Rover Car / Bipedal Mech / Quadruped Spider / Siege Tank)\n\
+                     [ENTER / V / TAB] Save & Return to Street Driving",
+                    session.car_design.robot_form,
                     session.car_design.body_style,
                     session.car_design.wheel_scale,
                     session.car_design.ride_height,

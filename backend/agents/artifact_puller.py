@@ -1,10 +1,12 @@
-"""Managed Agent Sandbox Artifact Puller, Skin/Texture Generator, and Physical Export Pipeline.
+"""Managed Agent Sandbox Artifact Puller, Skin/Texture Generator, Audio Synthesizer & Physical Export Pipeline.
 
 Implements Gretchen's Car Brainstorming Architecture:
-1. Direct Download via Environments / Files API (`environment-{env_id}:download?alt=media`)
+1. Direct Download via configurable Environments / Files API (`SANDBOX_DOWNLOAD_URI_TEMPLATE`)
    to retrieve files created inside the Managed Agent's remote Linux microVM (`/workspace`).
-2. Vehicle Albedo Skin & Track Texture generation via `gemini-nano-banana-2.1`.
-3. Physical Export Pipeline (`exports/{project_id}/`):
+2. Vehicle Albedo Skin & Track Texture generation via configurable `SKIN_MODEL_ID` (`gemini-nano-banana-2.1`)
+   with instant theme-aware local PIL fallback when `STUDIO_EXECUTION_MODE=local_fast`.
+3. Theme-Adaptive Ambient Soundtrack WAV synthesis (`theme_music.wav`) returned to the Rust client.
+4. Physical Export Pipeline (`exports/{project_id}/`):
    - Watertight ASCII/Binary STL meshes calibrated for M3 pass-through (3.2mm) & brass heat-set inserts (4.0mm)
    - URDF (`rover.urdf`) for ROS / Gazebo / Isaac Sim
    - Bill of Materials (`BOM.csv`) with COTS parts (SG90/MG996R servos, 608ZZ bearings, M3x12mm screws, ESP32)
@@ -13,11 +15,14 @@ Implements Gretchen's Car Brainstorming Architecture:
 
 import base64
 import io
+import math
 import os
 from pathlib import Path
+import struct
 import tarfile
 from typing import Any, Dict, List, Optional
 import urllib.request
+import wave
 
 
 GENERATED_ASSETS_DIR = Path(__file__).parent.parent / "assets" / "generated"
@@ -32,6 +37,10 @@ def pull_managed_agent_workspace(
     api_key: Optional[str] = None,
 ) -> List[str]:
     """Download and extract the `/workspace` .tar archive from a Gemini Managed Agent sandbox."""
+    exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto").lower()
+    if exec_mode in ("local_fast", "gemini_direct"):
+        return []
+
     key = api_key or os.getenv("GEMINI_API_KEY")
     target_dir = GENERATED_ASSETS_DIR / project_id
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -39,10 +48,11 @@ def pull_managed_agent_workspace(
     if not environment_id or not key:
         return []
 
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/files/"
-        f"environment-{environment_id}:download?alt=media"
+    uri_template = os.getenv(
+        "SANDBOX_DOWNLOAD_URI_TEMPLATE",
+        "https://generativelanguage.googleapis.com/v1beta/files/environment-{environment_id}:download?alt=media",
     )
+    url = uri_template.format(environment_id=environment_id)
     req = urllib.request.Request(url, headers={"x-goog-api-key": key})
     extracted_files: List[str] = []
 
@@ -67,22 +77,24 @@ def generate_vehicle_skin_texture(
     skin_name: str = "chassis_skin.png",
     api_key: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Generate a UV/albedo skin texture for the MuJoCo car/rover using Nano Banana 2.1."""
+    """Generate a UV/albedo skin texture for the MuJoCo vehicle/robot using Nano Banana 2.1 or local theme synthesis."""
+    exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto").lower()
+    skin_model = os.getenv("SKIN_MODEL_ID", "gemini-nano-banana-2.1")
     key = api_key or os.getenv("GEMINI_API_KEY")
     target_dir = GENERATED_ASSETS_DIR / project_id
     target_dir.mkdir(parents=True, exist_ok=True)
     out_path = target_dir / skin_name
 
-    if key:
+    if exec_mode != "local_fast" and key and key not in ("your_gemini_key", "your_gemini_api_key_here"):
         try:
             from google import genai
 
             client = genai.Client(api_key=key)
             interaction = client.interactions.create(
-                model="gemini-nano-banana-2.1",
+                model=skin_model,
                 input=(
-                    f"Create a seamless top-down off-road rover chassis albedo texture and decal sheet for: {prompt}. "
-                    "Industrial cyber-robotics aesthetic, high contrast hazard stripes, weathered carbon and anodized metal, 1:1 square."
+                    f"Create a seamless top-down vehicle/robot chassis albedo texture and decal sheet for: {prompt}. "
+                    "High contrast trim stripes, weathered armor and anodized metal, 1:1 square."
                 ),
             )
             for item in getattr(interaction, "outputs", []) or []:
@@ -95,24 +107,101 @@ def generate_vehicle_skin_texture(
                         "url": f"/assets/generated/{project_id}/{skin_name}",
                     }
         except Exception as exc:
-            print(f"[SkinGenerator] Nano Banana fallback triggered ({exc})")
+            print(f"[SkinGenerator] {skin_model} fallback triggered ({exc})")
 
     from PIL import Image, ImageDraw
 
-    img = Image.new("RGBA", (256, 256), (26, 36, 52, 255))
+    p = prompt.lower()
+    if any(k in p for k in ["medieval", "castle", "knight", "oak", "gold", "royal", "dragon"]):
+        bg_col = (94, 58, 28, 255)
+        border_col = (218, 175, 52, 255)
+        stripe_col = (168, 36, 36, 255)
+        rib_col = (235, 195, 75, 230)
+    elif any(k in p for k in ["desert", "wasteland", "canyon", "rust", "sand", "copper"]):
+        bg_col = (138, 68, 30, 255)
+        border_col = (235, 145, 42, 255)
+        stripe_col = (48, 48, 54, 255)
+        rib_col = (250, 190, 50, 220)
+    elif any(k in p for k in ["arctic", "ice", "snow", "glacier", "cryo"]):
+        bg_col = (215, 232, 248, 255)
+        border_col = (20, 195, 250, 255)
+        stripe_col = (40, 110, 185, 255)
+        rib_col = (0, 235, 255, 220)
+    else:
+        bg_col = (24, 34, 52, 255)
+        border_col = (0, 220, 255, 255)
+        stripe_col = (255, 105, 35, 255)
+        rib_col = (0, 255, 160, 220)
+
+    img = Image.new("RGBA", (256, 256), bg_col)
     draw = ImageDraw.Draw(img)
-    # Anodized frame border + hazard stripes + telemetry markings
-    draw.rectangle([0, 0, 255, 255], outline=(0, 220, 255, 255), width=8)
-    draw.rectangle([96, 0, 160, 255], fill=(255, 105, 35, 255))
+    draw.rectangle([0, 0, 255, 255], outline=border_col, width=10)
+    draw.rectangle([92, 0, 164, 255], fill=stripe_col)
     for offset in range(16, 240, 32):
-        draw.line([(16, offset), (80, offset + 12)], fill=(0, 255, 160, 220), width=4)
-        draw.line([(176, offset), (240, offset + 12)], fill=(0, 255, 160, 220), width=4)
+        draw.line([(16, offset), (80, offset + 12)], fill=rib_col, width=5)
+        draw.line([(176, offset), (240, offset + 12)], fill=rib_col, width=5)
     img.save(out_path, format="PNG")
 
     return {
         "skin_name": skin_name,
         "local_path": str(out_path),
         "url": f"/assets/generated/{project_id}/{skin_name}",
+    }
+
+
+def generate_theme_soundtrack_wav(
+    theme: str,
+    project_id: str,
+    wav_name: str = "theme_music.wav",
+) -> Dict[str, str]:
+    """Synthesize a loopable theme-specific ambient soundtrack WAV file for the Rust client."""
+    target_dir = GENERATED_ASSETS_DIR / project_id
+    target_dir.mkdir(parents=True, exist_ok=True)
+    out_path = target_dir / wav_name
+
+    sample_rate = 22050
+    duration_sec = 2.4
+    num_samples = int(sample_rate * duration_sec)
+
+    if "medieval" in theme:
+        notes = [293.66, 349.23, 440.00, 392.00, 329.63, 293.66]  # Dorian lute arpeggio (D4-F4-A4-G4-E4-D4)
+        track_label = "Medieval Tavern Lute & War Drums (D-Dorian)"
+    elif "desert" in theme or "wasteland" in theme:
+        notes = [110.00, 130.81, 146.83, 155.56, 146.83, 110.00]  # Gritty low desert bass riff
+        track_label = "Fury Canyon Industrial Bass Pulse"
+    elif "arctic" in theme:
+        notes = [523.25, 659.25, 783.99, 987.77, 783.99, 659.25]  # Shimmering crystalline cryo pad
+        track_label = "Subzero Crystalline Ambient Synth"
+    else:
+        notes = [130.81, 196.00, 261.63, 311.13, 261.63, 196.00]  # Cyberpunk C-minor synthwave pulse
+        track_label = "Cyberpunk 2099 Synthwave Arpeggio"
+
+    frames = bytearray()
+    samples_per_note = max(1, num_samples // len(notes))
+    for i in range(num_samples):
+        note_idx = min(len(notes) - 1, i // samples_per_note)
+        freq = notes[note_idx]
+        t = i / sample_rate
+        local_t = (i % samples_per_note) / samples_per_note
+        envelope = math.sin(math.pi * local_t) ** 0.5
+        val = (
+            0.55 * math.sin(2.0 * math.pi * freq * t)
+            + 0.25 * math.sin(2.0 * math.pi * (freq * 1.5) * t)
+            + 0.20 * math.sin(2.0 * math.pi * (freq * 0.5) * t)
+        )
+        pcm = int(max(-1.0, min(1.0, val * envelope * 0.35)) * 32767)
+        frames.extend(struct.pack("<h", pcm))
+
+    with wave.open(str(out_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(bytes(frames))
+
+    return {
+        "soundtrack_title": track_label,
+        "local_path": str(out_path),
+        "url": f"/assets/generated/{project_id}/{wav_name}",
     }
 
 
@@ -123,9 +212,10 @@ def write_rover_urdf(project_id: str, car_spec: Dict[str, Any]) -> str:
     mass_kg = float(car_spec.get("chassis_mass_kg", 4.5))
     motor_torque = float(car_spec.get("motor_torque_nm", 3.5))
     arm_torque = float(car_spec.get("arm_servo_torque_nm", 0.35))
+    robot_form = str(car_spec.get("robot_form", "rover_car"))
 
     urdf_xml = f"""<?xml version="1.0"?>
-<robot name="argon_modular_rover_{project_id}">
+<robot name="argon_{robot_form}_{project_id}">
   <link name="base_chassis">
     <visual>
       <geometry><box size="1.3 0.8 0.3"/></geometry>
@@ -157,7 +247,7 @@ def write_rover_urdf(project_id: str, car_spec: Dict[str, Any]) -> str:
     <limit lower="-1.2" upper="1.57" effort="{arm_torque}" velocity="2.5"/>
   </joint>
 
-  <joint name="front_left_drive" type="continuous">
+  <joint name="primary_drive_actuator" type="continuous">
     <parent link="base_chassis"/>
     <child link="modular_arm_link_1"/>
     <origin xyz="0.45 0.45 -0.05" rpy="0 0 0"/>
@@ -230,9 +320,9 @@ def export_physical_build_package(
     urdf_dst.write_text(Path(urdf_src).read_text(encoding="utf-8"), encoding="utf-8")
 
     bom_csv = """Item,Part_Number,Specification,Quantity,Mount_Standard,Notes
-1,MG996R_SERVO,High-Torque Metal Gear Servo (11 kg-cm @ 6V),4,M3_faceplate_40mm,Drive + Steering Actuators
+1,MG996R_SERVO,High-Torque Metal Gear Servo (11 kg-cm @ 6V),4,M3_faceplate_40mm,Drive + Steering / Leg Actuators
 2,SG90_MICRO_SERVO,9g Micro Servo (1.8 kg-cm @ 4.8V),2,M3_pass_through_3.2mm,2-DOF Modular Arm / Gripper
-3,608ZZ_BEARING,Deep Groove Ball Bearing 8x22x7mm,8,Press_Fit_22.1mm,Wheel Hub Axles
+3,608ZZ_BEARING,Deep Groove Ball Bearing 8x22x7mm,8,Press_Fit_22.1mm,Wheel Hub & Joint Axles
 4,M3X12_SHCS,M3x12mm Socket Head Cap Screw (ISO 4762),24,3.2mm_Clearance_Hole,Chassis & Bracket Fasteners
 5,M3_HEAT_INSERT,M3x4x4.0mm Brass Heat-Set Insert,24,4.0mm_Soldering_Cavity,Thermoplastic Thread Anchors
 6,ESP32_S3_DEVKIT,ESP32-S3 Microcontroller + PWM Driver,1,M3_Standoff,Onboard Kinematics & Wi-Fi Telemetry
@@ -241,9 +331,10 @@ def export_physical_build_package(
     bom_path = pkg_dir / "BOM.csv"
     bom_path.write_text(bom_csv, encoding="utf-8")
 
-    firmware_py = f'''"""Auto-Generated MicroPython Firmware for Argon Modular Rover ({project_id}).
+    firmware_py = f'''"""Auto-Generated MicroPython Firmware for Argon Modular Robot ({project_id}).
 
 Calibrated from in-game MuJoCo & URDF verification loop:
+- Robot Morphology: {car_spec.get("robot_form", "rover_car")}
 - Chassis Mass: {car_spec.get("chassis_mass_kg", 4.5)} kg
 - Drive Torque Limit: {car_spec.get("motor_torque_nm", 3.5)} N*m
 - Equipped Upgrade: {part_id}

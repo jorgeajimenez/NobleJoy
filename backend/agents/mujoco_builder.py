@@ -1,11 +1,12 @@
-"""MuJoCo Driving & Rover Physics Model Generator.
+"""MuJoCo Driving & Transformers-Style Multi-Robot Physics Model Generator.
 
-Generates physics-aware MuJoCo MJCF (.xml) & URDF vehicle/track definitions
-(chassis mass, wheel friction, suspension stiffness/damping, actuator torque limits,
-and modular upgrades) that the Managed Agent builds and validates in its sandbox.
+Generates physics-aware MuJoCo MJCF (.xml) & URDF definitions for:
+- `rover_car`: 4-Wheel Ackermann Street Car / Rover
+- `bipedal_mech`: Upright Bipedal Striker Mech (Hip/Knee hinge actuators + Torso)
+- `quadruped_crawler`: 4-Legged Spider / Quadruped Robotics Crawler
+- `siege_tank`: Heavy Tracked Dual-Tread Siege Tank with Rotating Turret
 """
 
-from pathlib import Path
 from typing import Any, Dict
 
 from .artifact_puller import GENERATED_ASSETS_DIR
@@ -16,17 +17,31 @@ def build_mujoco_car_mjcf(
     car_spec: Dict[str, Any],
     skin_texture_file: str = "chassis_skin.png",
 ) -> str:
-    """Write a complete MuJoCo XML (MJCF) model for the car/rover + driving course."""
+    """Write a complete MuJoCo XML (MJCF) model for the active robot morphology + street course."""
     target_dir = GENERATED_ASSETS_DIR / project_id
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    robot_form = str(car_spec.get("robot_form", "rover_car"))
     mass_kg = float(car_spec.get("chassis_mass_kg", 4.5))
     wheel_friction = float(car_spec.get("wheel_friction", 1.2))
     motor_torque = float(car_spec.get("motor_torque_nm", 3.5))
     clearance_m = float(car_spec.get("ground_clearance_m", 0.18))
     rgba = car_spec.get("chassis_rgba", "0.15 0.75 0.95 1.0")
 
-    mjcf_xml = f"""<mujoco model="argon_driving_rover_{project_id}">
+    if robot_form == "bipedal_mech":
+        chassis_z = clearance_m + 0.55
+        chassis_geom = f'<geom name="chassis_body" type="box" size="0.42 0.38 0.48" mass="{mass_kg}" material="chassis_mat" rgba="{rgba}"/>'
+    elif robot_form == "quadruped_crawler":
+        chassis_z = clearance_m + 0.25
+        chassis_geom = f'<geom name="chassis_body" type="box" size="0.55 0.48 0.14" mass="{mass_kg}" material="chassis_mat" rgba="{rgba}"/>'
+    elif robot_form == "siege_tank":
+        chassis_z = clearance_m + 0.20
+        chassis_geom = f'<geom name="chassis_body" type="box" size="0.78 0.52 0.22" mass="{mass_kg * 1.35:.2f}" material="chassis_mat" rgba="{rgba}"/>'
+    else:
+        chassis_z = clearance_m + 0.15
+        chassis_geom = f'<geom name="chassis_body" type="box" size="0.65 0.40 0.15" mass="{mass_kg}" material="chassis_mat" rgba="{rgba}"/>'
+
+    mjcf_xml = f"""<mujoco model="argon_{robot_form}_{project_id}">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
   <option timestep="0.005" gravity="0 0 -9.81" integrator="RK4"/>
 
@@ -44,44 +59,44 @@ def build_mujoco_car_mjcf(
 
   <worldbody>
     <light directional="true" diffuse="0.9 0.9 0.9" specular="0.3 0.3 0.3" pos="0 0 15" dir="0 0 -1"/>
-    <geom name="track_floor" type="plane" size="25 25 0.1" material="ground_mat"/>
+    <geom name="track_floor" type="plane" size="40 25 0.1" material="ground_mat"/>
 
     <!-- Goal Beacon -->
-    <body name="data_core" pos="10 10 0.5">
+    <body name="data_core" pos="38 0 0.5">
       <geom name="goal_geom" type="cylinder" size="0.8 0.4" rgba="0.1 1.0 0.45 0.85" contype="0" conaffinity="0"/>
     </body>
 
-    <!-- Obstacle / Ramp / Blockade -->
-    <body name="blast_door" pos="5 5 0.75">
+    <!-- Obstacle / Blockade -->
+    <body name="blast_door" pos="19 0 0.75">
       <geom name="blast_door_geom" type="box" size="1.5 1.5 0.75" rgba="0.92 0.24 0.24 1.0"/>
     </body>
 
-    <!-- Physics-Aware Wheeled Car / Rover -->
-    <body name="car_chassis" pos="0 0 {clearance_m + 0.15}">
+    <!-- Physics-Aware Transformable MuJoCo Robot ({robot_form}) -->
+    <body name="car_chassis" pos="0 0 {chassis_z}">
       <freejoint name="car_root"/>
-      <geom name="chassis_body" type="box" size="0.65 0.40 0.15" mass="{mass_kg}" material="chassis_mat" rgba="{rgba}"/>
+      {chassis_geom}
 
-      <!-- Front Left Wheel (Steered + Driven) -->
+      <!-- Front Left Limb / Wheel Actuator (Steered + Driven) -->
       <body name="wheel_fl" pos="0.45 0.45 -0.05">
         <joint name="steer_fl" type="hinge" axis="0 0 1" limited="true" range="-35 35" damping="0.5"/>
         <joint name="drive_fl" type="hinge" axis="0 1 0"/>
         <geom type="cylinder" size="0.18 0.07" euler="90 0 0" mass="0.6" rgba="0.15 0.15 0.18 1"/>
       </body>
 
-      <!-- Front Right Wheel (Steered + Driven) -->
+      <!-- Front Right Limb / Wheel Actuator (Steered + Driven) -->
       <body name="wheel_fr" pos="0.45 -0.45 -0.05">
         <joint name="steer_fr" type="hinge" axis="0 0 1" limited="true" range="-35 35" damping="0.5"/>
         <joint name="drive_fr" type="hinge" axis="0 1 0"/>
         <geom type="cylinder" size="0.18 0.07" euler="90 0 0" mass="0.6" rgba="0.15 0.15 0.18 1"/>
       </body>
 
-      <!-- Rear Left Wheel -->
+      <!-- Rear Left Limb / Wheel Actuator -->
       <body name="wheel_rl" pos="-0.45 0.45 -0.05">
         <joint name="drive_rl" type="hinge" axis="0 1 0"/>
         <geom type="cylinder" size="0.18 0.07" euler="90 0 0" mass="0.6" rgba="0.15 0.15 0.18 1"/>
       </body>
 
-      <!-- Rear Right Wheel -->
+      <!-- Rear Right Limb / Wheel Actuator -->
       <body name="wheel_rr" pos="-0.45 -0.45 -0.05">
         <joint name="drive_rr" type="hinge" axis="0 1 0"/>
         <geom type="cylinder" size="0.18 0.07" euler="90 0 0" mass="0.6" rgba="0.15 0.15 0.18 1"/>

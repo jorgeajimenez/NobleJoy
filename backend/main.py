@@ -21,8 +21,8 @@ load_dotenv()
 
 app = FastAPI(
     title="Gretchen — Autonomous AI Game Studio & MuJoCo Physics Gateway",
-    description="Gemini 4 Argon Managed Agents Studio Backend + Real-Time MuJoCo Driving Physics for the Rust Bevy Client",
-    version="0.3.0",
+    description="Gemini 4 Argon Managed Agents Studio Backend + Real-Time MuJoCo Driving & Transformers Physics for the Rust Bevy Client",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -51,7 +51,7 @@ MUJOCO_SESSIONS: Dict[str, MujocoDrivingSession] = {}
 
 
 class CommissionRequest(BaseModel):
-    prompt: str = "Design an industrial rover test track with a shielded reactor core and high-torque wheel upgrade."
+    prompt: str = "Neon cyberpunk downtown avenue with towering skyscrapers and street rally car"
     project_id: Optional[str] = None
     level_index: int = 1
     seed_blockade: bool = True
@@ -62,6 +62,7 @@ class PhysicsStepRequest(BaseModel):
     throttle: float = 0.0
     steering: float = 0.0
     equip_upgrade: Optional[bool] = None
+    robot_form: Optional[str] = None
 
 
 class ExportBuildRequest(BaseModel):
@@ -71,68 +72,73 @@ class ExportBuildRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def studio_dashboard() -> str:
     """Built-in interactive Web Frontend for Gretchen's Cloud Run Studio Gateway."""
-    return """<!DOCTYPE html>
+    exec_mode = os.getenv("STUDIO_EXECUTION_MODE", "auto")
+    model_id = os.getenv("GEMINI_MODEL_ID", "gemini-4-argon")
+    agent_id = os.getenv("MANAGED_AGENT_ID", "antigravity-preview-09-2026")
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Gretchen — Autonomous AI Game Studio (Gemini 4 Argon + MuJoCo)</title>
   <style>
-    :root { --bg: #0b0f17; --card: #151c28; --accent: #00d8ff; --ok: #10b981; --warn: #f59e0b; --text: #e2e8f0; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-    header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #263248; padding-bottom: 16px; margin-bottom: 24px; }
-    .badge { background: #1e293b; border: 1px solid var(--accent); color: var(--accent); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; }
-    .card { background: var(--card); border: 1px solid #263248; border-radius: 12px; padding: 18px; }
-    h2 { margin-top: 0; font-size: 16px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
-    textarea, input[type="text"] { width: 100%; background: #0f1520; border: 1px solid #334155; color: #fff; padding: 10px; border-radius: 8px; margin-bottom: 10px; }
-    button { background: var(--accent); color: #061018; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; margin-right: 8px; margin-bottom: 8px; }
-    button.secondary { background: #334155; color: #fff; }
-    pre { background: #090d14; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; max-height: 260px; border: 1px solid #1e293b; }
-    .skin-preview { width: 140px; height: 140px; border-radius: 8px; border: 2px solid var(--accent); object-fit: cover; background: #090d14; }
-    .links a { color: var(--accent); margin-right: 12px; font-size: 13px; }
+    :root {{ --bg: #0b0f17; --card: #151c28; --accent: #00d8ff; --ok: #10b981; --warn: #f59e0b; --text: #e2e8f0; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }}
+    header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #263248; padding-bottom: 16px; margin-bottom: 24px; }}
+    .badge {{ background: #1e293b; border: 1px solid var(--accent); color: var(--accent); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 20px; }}
+    .card {{ background: var(--card); border: 1px solid #263248; border-radius: 12px; padding: 18px; }}
+    h2 {{ margin-top: 0; font-size: 16px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }}
+    textarea, input[type="text"] {{ width: 100%; background: #0f1520; border: 1px solid #334155; color: #fff; padding: 10px; border-radius: 8px; margin-bottom: 10px; }}
+    button {{ background: var(--accent); color: #061018; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; margin-right: 8px; margin-bottom: 8px; }}
+    button.secondary {{ background: #334155; color: #fff; }}
+    pre {{ background: #090d14; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; max-height: 260px; border: 1px solid #1e293b; }}
+    .skin-preview {{ width: 140px; height: 140px; border-radius: 8px; border: 2px solid var(--accent); object-fit: cover; background: #090d14; }}
+    .links a {{ color: var(--accent); margin-right: 12px; font-size: 13px; }}
   </style>
 </head>
 <body>
   <header>
     <div>
       <h1 style="margin:0;font-size:22px;">GRETCHEN // Autonomous AI Game Studio & MuJoCo Gateway</h1>
-      <p style="margin:4px 0 0;color:#94a3b8;font-size:14px;">Gemini 4 Argon Managed Agents (<code>antigravity-preview-09-2026</code>) + Nano Banana 2.1 + MuJoCo Physics</p>
+      <p style="margin:4px 0 0;color:#94a3b8;font-size:14px;">Mode: <code>{exec_mode}</code> | Model: <code>{model_id}</code> | Managed Agent: <code>{agent_id}</code></p>
     </div>
     <div>
-      <span class="badge">Cloud Run Ready</span>
+      <span class="badge">Cloud & Local Switchable</span>
       <a href="/docs" style="color:var(--accent);margin-left:12px;font-size:14px;">Swagger API Docs &rarr;</a>
     </div>
   </header>
 
   <div class="grid">
     <div class="card">
-      <h2>1. Commission Level & Pull Sandbox Artifacts</h2>
+      <h2>1. Live World, Skin & Robot Morph Prompt</h2>
       <label style="font-size:12px;color:#94a3b8;">Project ID</label>
       <input id="projectId" type="text" value="job_4091"/>
-      <label style="font-size:12px;color:#94a3b8;">Client Prompt</label>
-      <textarea id="promptInput" rows="3">Design an industrial rover test track with a shielded reactor core and high-torque wheel upgrade.</textarea>
-      <button onclick="commissionLevel()">Commission Managed Agents</button>
+      <label style="font-size:12px;color:#94a3b8;">Client Prompt (Try "Take me to medieval times" or "Transform into a bipedal mech")</label>
+      <textarea id="promptInput" rows="3">Take me to medieval times with cobblestone castle streets, torches, and a royal war wagon</textarea>
+      <button onclick="commissionLevel()">Commission Scene & Assets</button>
       <div id="artifactLinks" class="links" style="margin-top:10px;"></div>
       <div style="display:flex;gap:14px;align-items:center;margin-top:12px;">
         <img id="skinImg" class="skin-preview" alt="Generated Rover Skin" src="" style="display:none;"/>
         <div id="skinCaption" style="font-size:12px;color:#94a3b8;"></div>
       </div>
-      <pre id="commissionOut">Click "Commission Managed Agents" to run Studio Director -> Level Architect -> Sandbox Pull.</pre>
+      <pre id="commissionOut">Click "Commission Scene & Assets" to run Studio Director -> Level Architect -> Asset Pull.</pre>
     </div>
 
     <div class="card">
-      <h2>2. MuJoCo Rover Physics & Torque Gate (&tau; = r &times; F)</h2>
-      <p style="font-size:13px;color:#94a3b8;margin-top:0;">Steps the 4-wheel rover MJCF model and verifies Center-of-Mass footprint & servo torque limits.</p>
-      <button onclick="stepPhysics(1.0, 0.0, false)">Drive Forward (Stock SG90 Servo)</button>
-      <button class="secondary" onclick="stepPhysics(1.0, 0.25, true)">Snap M3 Upgrade (MG996R 11 kg&middot;cm) & Step</button>
+      <h2>2. MuJoCo Physics & Transformers Robot Morph</h2>
+      <p style="font-size:13px;color:#94a3b8;margin-top:0;">Steps the active MuJoCo MJCF model and morphs between Car, Bipedal Mech, Quadruped Spider, and Siege Tank.</p>
+      <button onclick="stepPhysics(1.0, 0.0, false, 'rover_car')">4-Wheel Car</button>
+      <button class="secondary" onclick="stepPhysics(1.0, 0.0, true, 'bipedal_mech')">Morph: Bipedal Mech</button>
+      <button class="secondary" onclick="stepPhysics(1.0, 0.0, true, 'quadruped_crawler')">Morph: Spider Quadruped</button>
+      <button class="secondary" onclick="stepPhysics(1.0, 0.0, true, 'siege_tank')">Morph: Siege Tank</button>
       <pre id="physicsOut">Waiting for MuJoCo physics step...</pre>
     </div>
 
     <div class="card">
       <h2>3. Visual QA Playtester Audit & Live Hotfix</h2>
-      <p style="font-size:13px;color:#94a3b8;margin-top:0;">Audits viewport PNG capture + scene graph with <code>gemini-4-argon</code> and issues transform + MuJoCo hotfixes.</p>
+      <p style="font-size:13px;color:#94a3b8;margin-top:0;">Audits viewport PNG capture + scene graph with <code>{model_id}</code> and issues transform + MuJoCo hotfixes.</p>
       <input type="file" id="viewportFile" accept="image/png" style="margin-bottom:10px;display:block;color:#94a3b8;"/>
       <button onclick="runQaAudit()">Run Visual QA Audit & Hotfix</button>
       <pre id="qaOut">Waiting for Visual QA audit...</pre>
@@ -147,66 +153,68 @@ async def studio_dashboard() -> str:
   </div>
 
   <script>
-    async function commissionLevel() {
+    async function commissionLevel() {{
       const project_id = document.getElementById('projectId').value;
       const prompt = document.getElementById('promptInput').value;
-      document.getElementById('commissionOut').textContent = 'Running Studio Director + Level Architect + Managed Agent Pull...';
-      const res = await fetch('/api/commission-level', {
+      document.getElementById('commissionOut').textContent = 'Running Studio Director + Level Architect + Asset Synthesis...';
+      const res = await fetch('/api/commission-level', {{
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({project_id, prompt, seed_blockade: true})
-      });
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project_id, prompt, seed_blockade: true}})
+      }});
       const data = await res.json();
       document.getElementById('commissionOut').textContent = JSON.stringify(data, null, 2);
-      if (data.skin_url) {
+      if (data.skin_url) {{
         const img = document.getElementById('skinImg');
         img.src = data.skin_url + '?t=' + Date.now();
         img.style.display = 'block';
         document.getElementById('skinCaption').innerHTML =
-          '<b>Generated Rover Albedo Skin</b><br/>Served to Rust Bevy Client';
-      }
+          '<b>Generated Albedo Skin</b><br/>Robot Form: ' + (data.car_design?.robot_form || 'rover_car') +
+          '<br/>Music: ' + (data.environment_style?.soundtrack_style || 'Synthwave');
+      }}
       document.getElementById('artifactLinks').innerHTML = `
-        <a href="${data.mjcf_url}" target="_blank">MuJoCo XML (car_level.xml)</a>
-        <a href="${data.urdf_url}" target="_blank">ROS URDF (rover.urdf)</a>
-        <a href="${data.stl_url}" target="_blank">M3 Upgrade Mesh (.stl)</a>
+        <a href="${{data.mjcf_url}}" target="_blank">MuJoCo XML (car_level.xml)</a>
+        <a href="${{data.urdf_url}}" target="_blank">ROS URDF (rover.urdf)</a>
+        <a href="${{data.stl_url}}" target="_blank">M3 Upgrade Mesh (.stl)</a>
+        <a href="${{data.music_url || '#'}}" target="_blank">Theme Audio (.wav)</a>
       `;
-    }
+    }}
 
-    async function stepPhysics(throttle, steering, equip_upgrade) {
+    async function stepPhysics(throttle, steering, equip_upgrade, robot_form) {{
       const project_id = document.getElementById('projectId').value;
-      const res = await fetch('/api/physics-step', {
+      const res = await fetch('/api/physics-step', {{
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({project_id, throttle, steering, equip_upgrade})
-      });
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project_id, throttle, steering, equip_upgrade, robot_form}})
+      }});
       const data = await res.json();
       document.getElementById('physicsOut').textContent = JSON.stringify(data, null, 2);
-    }
+    }}
 
-    async function runQaAudit() {
+    async function runQaAudit() {{
       const project_id = document.getElementById('projectId').value;
       const fileInput = document.getElementById('viewportFile');
       const form = new FormData();
       form.append('project_id', project_id);
-      if (fileInput.files.length > 0) {
+      if (fileInput.files.length > 0) {{
         form.append('viewport_png', fileInput.files[0]);
-      }
-      document.getElementById('qaOut').textContent = 'Running Gemini 4 Argon Visual QA Playtester...';
-      const res = await fetch('/api/qa-audit', { method: 'POST', body: form });
+      }}
+      document.getElementById('qaOut').textContent = 'Running Visual QA Playtester...';
+      const res = await fetch('/api/qa-audit', {{ method: 'POST', body: form }});
       const data = await res.json();
       document.getElementById('qaOut').textContent = JSON.stringify(data, null, 2);
-    }
+    }}
 
-    async function exportBuild() {
+    async function exportBuild() {{
       const project_id = document.getElementById('projectId').value;
-      const res = await fetch('/api/export-build', {
+      const res = await fetch('/api/export-build', {{
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({project_id})
-      });
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{project_id}})
+      }});
       const data = await res.json();
       document.getElementById('exportOut').textContent = JSON.stringify(data, null, 2);
-    }
+    }}
   </script>
 </body>
 </html>"""
@@ -217,8 +225,11 @@ async def health() -> Dict[str, str]:
     return {
         "status": "ok",
         "studio": "Gretchen Autonomous Game Studio",
-        "model": "gemini-4-argon",
-        "managed_agent": "antigravity-preview-09-2026",
+        "execution_mode": os.getenv("STUDIO_EXECUTION_MODE", "auto"),
+        "use_managed_agent": os.getenv("USE_MANAGED_AGENT", "true"),
+        "model": os.getenv("GEMINI_MODEL_ID", "gemini-4-argon"),
+        "managed_agent": os.getenv("MANAGED_AGENT_ID", "antigravity-preview-09-2026"),
+        "skin_model": os.getenv("SKIN_MODEL_ID", "gemini-nano-banana-2.1"),
         "physics": "mujoco",
         "environment": os.getenv("K_SERVICE", "local"),
     }
@@ -254,7 +265,7 @@ async def commission_level(req: CommissionRequest) -> Dict[str, Any]:
 
 @app.post("/api/physics-step")
 async def physics_step(req: PhysicsStepRequest) -> Dict[str, Any]:
-    """Step the MuJoCo car/rover simulation and return live 3D body transforms + CoM/torque sanity checks."""
+    """Step the MuJoCo car/robot simulation (including live Transformers morphs) and return telemetry."""
     sim = MUJOCO_SESSIONS.get(req.project_id)
     if sim is None:
         contract = ACTIVE_PROJECTS.get(req.project_id, {})
@@ -269,6 +280,7 @@ async def physics_step(req: PhysicsStepRequest) -> Dict[str, Any]:
         throttle=req.throttle,
         steering=req.steering,
         equip_upgrade=req.equip_upgrade,
+        robot_form=req.robot_form,
     )
 
 

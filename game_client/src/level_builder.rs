@@ -1,5 +1,6 @@
 use crate::components::{EntityRole, GameSessionState, StudioEntity};
 use crate::scene_parser::{CarDesignSpec, HotfixDelta, LevelContract};
+use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 
 pub fn spawn_player_car_entity(
@@ -19,12 +20,226 @@ pub fn spawn_player_car_entity(
 
     let [pr, pg, pb] = car_design.primary_color;
     let [ar, ag, ab] = car_design.accent_color;
-    let ride_y = pos.y + car_design.ride_height;
+    let robot_form = car_design.robot_form.as_str();
 
     let is_medieval = car_design.body_style == "medieval_wagon";
     let is_crawler = car_design.body_style == "armored_crawler";
     let is_cyber = car_design.body_style == "cyber_interceptor";
 
+    let chassis_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(pr, pg, pb),
+        base_color_texture: chassis_texture,
+        metallic: if is_medieval { 0.25 } else { 0.60 },
+        perceptual_roughness: if is_medieval { 0.75 } else { 0.28 },
+        ..default()
+    });
+
+    let accent_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(ar, ag, ab),
+        emissive: if is_cyber || robot_form == "bipedal_mech" {
+            LinearRgba::rgb(ar * 1.4, ag * 1.4, ab * 1.4)
+        } else {
+            LinearRgba::BLACK
+        },
+        metallic: 0.78,
+        perceptual_roughness: 0.24,
+        ..default()
+    });
+
+    let dark_joint_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.14, 0.16, 0.20),
+        metallic: 0.85,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+
+    let visor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.95, 1.0),
+        emissive: LinearRgba::rgb(0.4, 2.8, 3.2),
+        ..default()
+    });
+
+    let initial_rot = Quat::from_rotation_y(yaw);
+
+    // === TRANSFORMERS FORM 1: UPRIGHT BIPEDAL MECH (`bipedal_mech`) ===
+    if robot_form == "bipedal_mech" {
+        let mech_y = pos.y + 0.58 + car_design.ride_height;
+        commands
+            .spawn((
+                PbrBundle {
+                    mesh: meshes.add(Cuboid::new(0.75 * scale, 0.88 * scale, 0.86 * scale)),
+                    material: chassis_mat.clone(),
+                    transform: Transform::from_xyz(pos.x, mech_y, pos.z).with_rotation(initial_rot),
+                    ..default()
+                },
+                StudioEntity {
+                    id: "spawn_pad".to_string(),
+                    role: EntityRole::Player,
+                    solid: false,
+                    half_extents: Vec3::new(0.78, 0.95, 0.62) * scale,
+                },
+            ))
+            .with_children(|parent| {
+                // Mech Head + Glowing Visor
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cuboid::new(0.42, 0.36, 0.44)),
+                    material: accent_mat.clone(),
+                    transform: Transform::from_xyz(0.05, 0.64, 0.0),
+                    ..default()
+                });
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cuboid::new(0.12, 0.14, 0.38)),
+                    material: visor_mat.clone(),
+                    transform: Transform::from_xyz(0.24, 0.66, 0.0),
+                    ..default()
+                });
+                // Left & Right Articulated Legs + Foot Treads
+                let leg_mesh = meshes.add(Cuboid::new(0.28, 0.68, 0.28));
+                let foot_mesh = meshes.add(Cuboid::new(0.55, 0.16, 0.36));
+                for side_z in [-0.30_f32, 0.30_f32] {
+                    parent.spawn(PbrBundle {
+                        mesh: leg_mesh.clone(),
+                        material: dark_joint_mat.clone(),
+                        transform: Transform::from_xyz(0.0, -0.52, side_z),
+                        ..default()
+                    });
+                    parent.spawn(PbrBundle {
+                        mesh: foot_mesh.clone(),
+                        material: accent_mat.clone(),
+                        transform: Transform::from_xyz(0.08, -0.84, side_z),
+                        ..default()
+                    });
+                }
+                // Twin Shoulder Servo Arms & Plasma Cannons
+                let shoulder_mesh = meshes.add(Cuboid::new(0.44, 0.32, 0.30));
+                let arm_cannon = meshes.add(Cylinder::new(0.10, 0.78));
+                for side_z in [-0.58_f32, 0.58_f32] {
+                    parent.spawn(PbrBundle {
+                        mesh: shoulder_mesh.clone(),
+                        material: accent_mat.clone(),
+                        transform: Transform::from_xyz(0.0, 0.28, side_z),
+                        ..default()
+                    });
+                    parent.spawn(PbrBundle {
+                        mesh: arm_cannon.clone(),
+                        material: chassis_mat.clone(),
+                        transform: Transform::from_xyz(0.38, 0.10, side_z)
+                            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                        ..default()
+                    });
+                }
+            });
+        return;
+    }
+
+    // === TRANSFORMERS FORM 2: 4-LEGGED SPIDER / QUADRUPED CRAWLER (`quadruped_crawler`) ===
+    if robot_form == "quadruped_crawler" {
+        let spider_y = pos.y + 0.28 + car_design.ride_height;
+        commands
+            .spawn((
+                PbrBundle {
+                    mesh: meshes.add(Cuboid::new(1.18 * scale, 0.28 * scale, 0.92 * scale)),
+                    material: chassis_mat.clone(),
+                    transform: Transform::from_xyz(pos.x, spider_y, pos.z)
+                        .with_rotation(initial_rot),
+                    ..default()
+                },
+                StudioEntity {
+                    id: "spawn_pad".to_string(),
+                    role: EntityRole::Player,
+                    solid: false,
+                    half_extents: Vec3::new(0.85, 0.45, 0.72) * scale,
+                },
+            ))
+            .with_children(|parent| {
+                // Quadruped Sensor Head Pod
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cuboid::new(0.45, 0.24, 0.48)),
+                    material: accent_mat.clone(),
+                    transform: Transform::from_xyz(0.55, 0.16, 0.0),
+                    ..default()
+                });
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cuboid::new(0.10, 0.12, 0.42)),
+                    material: visor_mat,
+                    transform: Transform::from_xyz(0.76, 0.18, 0.0),
+                    ..default()
+                });
+                // 4 Multi-Jointed Articulated Spider Legs
+                let femur_mesh = meshes.add(Cylinder::new(0.09, 0.58));
+                let tibia_mesh = meshes.add(Cylinder::new(0.07, 0.62));
+                for lx in [-0.42_f32, 0.42_f32] {
+                    for lz in [-0.55_f32, 0.55_f32] {
+                        let sgn = lz.signum();
+                        parent.spawn(PbrBundle {
+                            mesh: femur_mesh.clone(),
+                            material: accent_mat.clone(),
+                            transform: Transform::from_xyz(lx, 0.06, lz * 0.85)
+                                .with_rotation(Quat::from_rotation_x(sgn * 0.85)),
+                            ..default()
+                        });
+                        parent.spawn(PbrBundle {
+                            mesh: tibia_mesh.clone(),
+                            material: dark_joint_mat.clone(),
+                            transform: Transform::from_xyz(lx, -0.22, lz * 1.18)
+                                .with_rotation(Quat::from_rotation_x(-sgn * 0.25)),
+                            ..default()
+                        });
+                    }
+                }
+            });
+        return;
+    }
+
+    // === TRANSFORMERS FORM 3: HEAVY TRACKED SIEGE TANK (`siege_tank`) ===
+    if robot_form == "siege_tank" {
+        let tank_y = pos.y + 0.12 + car_design.ride_height;
+        commands
+            .spawn((
+                PbrBundle {
+                    mesh: meshes.add(Cuboid::new(1.68 * scale, 0.38 * scale, 1.08 * scale)),
+                    material: chassis_mat.clone(),
+                    transform: Transform::from_xyz(pos.x, tank_y, pos.z).with_rotation(initial_rot),
+                    ..default()
+                },
+                StudioEntity {
+                    id: "spawn_pad".to_string(),
+                    role: EntityRole::Player,
+                    solid: false,
+                    half_extents: Vec3::new(0.88, 0.48, 0.68) * scale,
+                },
+            ))
+            .with_children(|parent| {
+                // Left & Right Armored Caterpillar Treads
+                let tread_mesh = meshes.add(Cuboid::new(1.76, 0.34, 0.26));
+                for side_z in [-0.58_f32, 0.58_f32] {
+                    parent.spawn(PbrBundle {
+                        mesh: tread_mesh.clone(),
+                        material: dark_joint_mat.clone(),
+                        transform: Transform::from_xyz(0.0, -0.10, side_z),
+                        ..default()
+                    });
+                }
+                // Rotating Armored Turret + Heavy Siege Cannon
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cylinder::new(0.46, 0.30)),
+                    material: accent_mat.clone(),
+                    transform: Transform::from_xyz(-0.06, 0.30, 0.0),
+                    ..default()
+                });
+                parent.spawn(PbrBundle {
+                    mesh: meshes.add(Cylinder::new(0.11, 1.25)),
+                    material: dark_joint_mat,
+                    transform: Transform::from_xyz(0.62, 0.32, 0.0)
+                        .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+                    ..default()
+                });
+            });
+        return;
+    }
+
+    // === DEFAULT FORM (`rover_car`): 4-WHEEL STREET CAR / ROVER ===
+    let ride_y = pos.y + car_design.ride_height;
     let (chassis_len, chassis_h, chassis_w) = if is_medieval {
         (1.55 * scale, 0.36 * scale, 0.92 * scale)
     } else if is_crawler {
@@ -34,26 +249,6 @@ pub fn spawn_player_car_entity(
     } else {
         (1.45 * scale, 0.30 * scale, 0.86 * scale)
     };
-
-    let chassis_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(pr, pg, pb),
-        base_color_texture: chassis_texture,
-        metallic: if is_medieval { 0.25 } else { 0.55 },
-        perceptual_roughness: if is_medieval { 0.75 } else { 0.28 },
-        ..default()
-    });
-
-    let accent_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(ar, ag, ab),
-        emissive: if is_cyber {
-            LinearRgba::rgb(ar * 1.4, ag * 1.4, ab * 1.4)
-        } else {
-            LinearRgba::BLACK
-        },
-        metallic: 0.75,
-        perceptual_roughness: 0.25,
-        ..default()
-    });
 
     let wheel_r = 0.24 * car_design.wheel_scale;
     let wheel_w = 0.15 * car_design.wheel_scale;
@@ -101,8 +296,6 @@ pub fn spawn_player_car_entity(
         ..default()
     });
 
-    let initial_rot = Quat::from_rotation_y(yaw);
-
     commands
         .spawn((
             PbrBundle {
@@ -119,14 +312,12 @@ pub fn spawn_player_car_entity(
             },
         ))
         .with_children(|parent| {
-            // Cabin / canopy
             parent.spawn(PbrBundle {
                 mesh: cab_mesh,
                 material: cab_mat,
                 transform: Transform::from_xyz(-0.08, 0.24, 0.0),
                 ..default()
             });
-            // Rear spoiler or iron trim
             parent.spawn(PbrBundle {
                 mesh: meshes.add(Cuboid::new(0.18, 0.14, chassis_w * 0.95)),
                 material: accent_mat.clone(),
@@ -146,7 +337,6 @@ pub fn spawn_player_car_entity(
                 ..default()
             });
 
-            // 4 Wheels
             let wx = chassis_len * 0.34;
             let wz = chassis_w * 0.55;
             let wheel_offsets = [
@@ -165,7 +355,6 @@ pub fn spawn_player_car_entity(
                 });
             }
 
-            // Custom hardware attachment (Battering Ram / Twin Turbo / M3 Servo Arm)
             match car_design.roof_attachment.as_str() {
                 "battering_ram" => {
                     parent.spawn(PbrBundle {
@@ -197,6 +386,34 @@ pub fn spawn_player_car_entity(
         });
 }
 
+pub fn rebuild_player_car_in_place(
+    commands: &mut Commands,
+    asset_server: &Res<AssetServer>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    player_query: &Query<(Entity, &StudioEntity, &Transform)>,
+    session: &GameSessionState,
+) {
+    let mut current_pos = session.player_pos;
+    for (entity, studio_ent, tf) in player_query.iter() {
+        if studio_ent.role == EntityRole::Player {
+            current_pos = tf.translation;
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+    spawn_player_car_entity(
+        commands,
+        asset_server,
+        meshes,
+        materials,
+        current_pos,
+        session.rover_yaw,
+        1.0,
+        &session.car_design,
+        &session.downloaded_skin_asset,
+    );
+}
+
 pub fn spawn_level_from_contract(
     commands: &mut Commands,
     asset_server: &Res<AssetServer>,
@@ -206,7 +423,14 @@ pub fn spawn_level_from_contract(
     session: &mut ResMut<GameSessionState>,
     contract: &LevelContract,
     local_skin_asset: Option<String>,
+    local_music_asset: Option<String>,
+    preserve_pose: bool,
 ) {
+    let saved_player_xz: Option<(f32, f32)> = if preserve_pose {
+        Some((session.player_pos.x, session.player_pos.z))
+    } else {
+        None
+    };
     for entity in existing_entities.iter() {
         commands.entity(entity).despawn_recursive();
     }
@@ -226,17 +450,43 @@ pub fn spawn_level_from_contract(
     if local_skin_asset.is_some() {
         session.downloaded_skin_asset = local_skin_asset.clone();
     }
-    session.victory = false;
-    session.upgrade_equipped = false;
-    session.qa_cleaned = false;
-    session.rover_yaw = 0.0;
-    session.rover_speed = 0.0;
+    if let Some(ref music_rel) = local_music_asset {
+        session.downloaded_music_asset = Some(music_rel.clone());
+        // Spawn looping theme audio track attached to the level so it swaps when the scene changes!
+        commands.spawn((
+            AudioBundle {
+                source: asset_server.load(music_rel.clone()),
+                settings: PlaybackSettings {
+                    mode: PlaybackMode::Loop,
+                    volume: Volume::new(0.28),
+                    ..default()
+                },
+            },
+            StudioEntity {
+                id: "env_theme_music".to_string(),
+                role: EntityRole::EnvironmentProp,
+                solid: false,
+                half_extents: Vec3::ZERO,
+            },
+        ));
+    }
+
+    if !preserve_pose {
+        session.victory = false;
+        session.upgrade_equipped = false;
+        session.qa_cleaned = false;
+        session.rover_yaw = 0.0;
+        session.rover_speed = 0.0;
+    }
+
     session.last_gbuffer_summary =
         "Pending QA (Press [Q] to run WGPU Compute G-Buffer Validator + Roadblock Hotfix)"
             .to_string();
     session.status_banner = format!(
-        "{} (Lvl {}) | [Tab] AI Studio Menu | [V] Car Designer | [W/A/S/D] Drive | [Q] WGPU QA Fix | [N] Next Level",
-        session.game_title, session.current_level
+        "Scene Active: {} | Music: [{}] | Robot: [{}] | [Tab] Live Prompt | [T] Transform Robot",
+        session.game_title,
+        session.environment_style.soundtrack_style,
+        session.car_design.robot_form
     );
 
     let env = &contract.environment_style;
@@ -287,7 +537,7 @@ pub fn spawn_level_from_contract(
         },
     ));
 
-    // 3. Raised Curbs / Castle Borders & SOLID Corridor Boundary Walls (prevents leaving the world!)
+    // 3. Raised Curbs / Castle Borders & SOLID Corridor Boundary Walls
     let [sr, sg, sb] = env.sidewalk_color;
     let sidewalk_mesh = meshes.add(Cuboid::new(120.0, 0.22, 2.2));
     let sidewalk_mat = materials.add(StandardMaterial {
@@ -312,7 +562,6 @@ pub fn spawn_level_from_contract(
         ));
     }
 
-    // Solid outer corridor walls along Z = -6.8 and Z = +6.8 so the car stays on the street & never clips through buildings!
     let wall_mesh = meshes.add(Cuboid::new(120.0, 1.2, 0.6));
     let wall_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(sr * 0.85, sg * 0.85, sb * 0.85),
@@ -336,7 +585,6 @@ pub fn spawn_level_from_contract(
         ));
     }
 
-    // Solid rear boundary behind spawn pad (X = -8.0)
     commands.spawn((
         PbrBundle {
             mesh: meshes.add(Cuboid::new(0.8, 1.5, 14.0)),
@@ -426,11 +674,7 @@ pub fn spawn_level_from_contract(
                     PbrBundle {
                         mesh: cobble_mesh.clone(),
                         material: dash_mat.clone(),
-                        transform: Transform::from_xyz(
-                            x_pos + (cz * 0.3),
-                            0.008,
-                            cz,
-                        ),
+                        transform: Transform::from_xyz(x_pos + (cz * 0.3), 0.008, cz),
                         ..default()
                     },
                     StudioEntity {
@@ -481,27 +725,29 @@ pub fn spawn_level_from_contract(
         }
     }
 
-    // 5. Spawn Uncleaned Coplanar Z-Fighting Artifact Patch (detected & cleared by WGPU Compute Shader on [Q])
-    commands.spawn((
-        PbrBundle {
-            mesh: meshes.add(Cuboid::new(3.2, 0.04, 3.2)),
-            material: materials.add(StandardMaterial {
-                base_color: Color::srgb(0.95, 0.15, 0.85),
-                emissive: LinearRgba::rgb(1.4, 0.1, 1.2),
+    // 5. Spawn Uncleaned Coplanar Z-Fighting Artifact Patch (if not yet cleaned)
+    if !session.qa_cleaned {
+        commands.spawn((
+            PbrBundle {
+                mesh: meshes.add(Cuboid::new(3.2, 0.04, 3.2)),
+                material: materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.95, 0.15, 0.85),
+                    emissive: LinearRgba::rgb(1.4, 0.1, 1.2),
+                    ..default()
+                }),
+                transform: Transform::from_xyz(16.2, 0.002, 0.0),
                 ..default()
-            }),
-            transform: Transform::from_xyz(16.2, 0.002, 0.0),
-            ..default()
-        },
-        StudioEntity {
-            id: "z_fighting_hazard_patch".to_string(),
-            role: EntityRole::ZFightArtifact,
-            solid: false,
-            half_extents: Vec3::ZERO,
-        },
-    ));
+            },
+            StudioEntity {
+                id: "z_fighting_hazard_patch".to_string(),
+                role: EntityRole::ZFightArtifact,
+                solid: false,
+                half_extents: Vec3::ZERO,
+            },
+        ));
+    }
 
-    // 6. Spawn Level Entities (Player Car, Goal, Theme Buildings, Solid Chicanes & Blockade)
+    // 6. Spawn Level Entities (Player Car/Robot at preserved street pose, Goal, Theme Buildings, Solid Chicanes & Blockade)
     let window_mat = materials.add(StandardMaterial {
         base_color: if is_medieval || is_desert {
             Color::srgb(1.0, 0.72, 0.25)
@@ -519,12 +765,15 @@ pub fn spawn_level_from_contract(
     for spec in &contract.entities {
         match spec.asset_key.as_str() {
             "player" => {
+                let (px, pz) = saved_player_xz.unwrap_or((spec.x, spec.z));
+                let spawn_pos = Vec3::new(px, spec.y, pz);
+                session.player_pos = spawn_pos;
                 spawn_player_car_entity(
                     commands,
                     asset_server,
                     meshes,
                     materials,
-                    Vec3::new(spec.x, spec.y, spec.z),
+                    spawn_pos,
                     session.rover_yaw,
                     spec.scale,
                     &session.car_design,
@@ -603,7 +852,6 @@ pub fn spawn_level_from_contract(
                             ..default()
                         });
                         if is_medieval {
-                            // Castle stone battlements crown at the top of medieval towers/keeps
                             parent.spawn(PbrBundle {
                                 mesh: battlement_mesh,
                                 material: bldg_mat,
@@ -614,7 +862,6 @@ pub fn spawn_level_from_contract(
                     });
             }
             _ => {
-                // Solid Street Obstacle / Medieval Cart / Portcullis Gate / Blast Door
                 let is_blast_door = spec.id == "blast_door";
                 let width = if is_blast_door {
                     1.2 * spec.scale
@@ -630,14 +877,20 @@ pub fn spawn_level_from_contract(
 
                 let obs_color = if is_medieval {
                     if is_blast_door {
-                        Color::srgb(0.28, 0.30, 0.34) // Iron Portcullis
+                        Color::srgb(0.28, 0.30, 0.34)
                     } else {
-                        Color::srgb(0.52, 0.34, 0.18) // Oak Merchant Cart / Barricade
+                        Color::srgb(0.52, 0.34, 0.18)
                     }
                 } else if is_desert {
                     Color::srgb(0.72, 0.28, 0.14)
                 } else {
                     Color::srgb(0.95, 0.22, 0.20)
+                };
+
+                let obs_z = if is_blast_door && session.qa_cleaned {
+                    6.5
+                } else {
+                    spec.z
                 };
 
                 commands.spawn((
@@ -654,7 +907,7 @@ pub fn spawn_level_from_contract(
                             perceptual_roughness: 0.45,
                             ..default()
                         }),
-                        transform: Transform::from_xyz(spec.x, height * 0.5, spec.z),
+                        transform: Transform::from_xyz(spec.x, height * 0.5, obs_z),
                         ..default()
                     },
                     StudioEntity {
