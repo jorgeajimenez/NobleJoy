@@ -1,4 +1,4 @@
-"""Level Architect Agent: Generates the driving course, invokes the Managed Agent sandbox, and pulls artifacts."""
+"""Level Architect Agent: Generates the GTA-style city street course, invokes the Managed Agent sandbox, and pulls artifacts."""
 
 import json
 import os
@@ -12,8 +12,90 @@ from .artifact_puller import (
 )
 
 
+def default_city_street_entities() -> List[Dict[str, Any]]:
+    """Return a GTA-style city avenue lined with skyscrapers/buildings, parked obstacles, a roadblock, and a checkpoint down the avenue."""
+    entities: List[Dict[str, Any]] = [
+        {
+            "id": "spawn_pad",
+            "asset_key": "player",
+            "x": 0.0,
+            "y": 0.35,
+            "z": 0.0,
+            "scale": 1.0,
+            "solid": False,
+        },
+        {
+            "id": "data_core",
+            "asset_key": "goal",
+            "x": 38.0,
+            "y": 0.5,
+            "z": 0.0,
+            "scale": 1.2,
+            "solid": False,
+        },
+        # Street traffic / construction chicane obstacles along the avenue (X = 0..40, Z = -4..+4 road width)
+        {
+            "id": "street_chicane_left",
+            "asset_key": "obstacle",
+            "x": 12.0,
+            "y": 0.9,
+            "z": -2.4,
+            "scale": 1.3,
+            "solid": True,
+        },
+        {
+            "id": "street_chicane_right",
+            "asset_key": "obstacle",
+            "x": 26.0,
+            "y": 0.9,
+            "z": 2.4,
+            "scale": 1.3,
+            "solid": True,
+        },
+        # Center-avenue blockade that Visual QA Agent detects and shifts onto the sidewalk!
+        {
+            "id": "blast_door",
+            "asset_key": "obstacle",
+            "x": 19.0,
+            "y": 1.5,
+            "z": 0.0,
+            "scale": 2.6,
+            "solid": True,
+        },
+    ]
+
+    # City block buildings lining the left (Z = -9.5) and right (Z = +9.5) sides of the avenue
+    building_heights = [2.4, 3.6, 2.8, 4.2, 3.1, 3.8, 2.6]
+    for idx, bx in enumerate([-6.0, 4.0, 14.0, 24.0, 34.0, 44.0, 54.0]):
+        sc = building_heights[idx % len(building_heights)]
+        entities.append(
+            {
+                "id": f"city_block_north_{idx}",
+                "asset_key": "building",
+                "x": bx,
+                "y": sc * 1.5,
+                "z": -9.5,
+                "scale": sc,
+                "solid": True,
+            }
+        )
+        entities.append(
+            {
+                "id": f"city_block_south_{idx}",
+                "asset_key": "building",
+                "x": bx,
+                "y": sc * 1.5,
+                "z": 9.5,
+                "scale": sc,
+                "solid": True,
+            }
+        )
+
+    return entities
+
+
 class LevelArchitectAgent:
-    """Drafts the spatial driving course & pulls generated MJCF/URDF/STL/Skin files from the Managed Agent sandbox."""
+    """Drafts the spatial city street course & pulls generated MJCF/URDF/STL/Skin files from the Managed Agent sandbox."""
 
     def __init__(self) -> None:
         self.api_key = os.getenv("GEMINI_API_KEY")
@@ -25,16 +107,16 @@ class LevelArchitectAgent:
         manifest: Dict[str, Any],
         seed_blockade: bool = True,
     ) -> Dict[str, Any]:
-        """Run the Managed Agent to build the level JSON + workspace artifacts, then pull them locally."""
+        """Run the Managed Agent to build the city street JSON + workspace artifacts, then pull them locally."""
         project_id = directive.get("project_id", "job_4091")
-        theme = directive.get("theme", "industrial_sorting_bay_track")
-        bounds = directive.get("world_bounds", {"x": 24.0, "z": 24.0})
+        theme = directive.get("theme", "neon_downtown_avenue")
+        bounds = directive.get("world_bounds", {"x": 80.0, "z": 40.0})
         car_physics = directive.get(
             "car_physics",
             {
                 "chassis_mass_kg": 4.5,
-                "wheel_friction": 1.2,
-                "motor_torque_nm": 3.5,
+                "wheel_friction": 1.35,
+                "motor_torque_nm": 4.0,
                 "ground_clearance_m": 0.18,
                 "servo_torque_kg_cm": 1.8,
             },
@@ -54,21 +136,25 @@ class LevelArchitectAgent:
         prompt = (
             "You are the Level Architect & Robotics Systems Integrator Agent in an autonomous AI game studio.\n"
             f"Studio Directive: {json.dumps(directive)}\n"
+            "Design a GTA-style 3D city street avenue extending along the +X axis from (0, 0, 0) to (38, 0, 0).\n"
+            "Line both sides of the street (at z = -9.5 and z = +9.5) with tall city buildings (asset_key='building').\n"
+            "Place 'spawn_pad' (asset_key='player') at (0, 0.35, 0) and 'data_core' (asset_key='goal') at (38, 0.5, 0).\n"
             "When running inside the Managed Agent Linux sandbox (/workspace):\n"
-            "1. Write `/workspace/level_contract.json` with the 3D driving course entities.\n"
-            "2. Write `/workspace/rover.urdf` and `/workspace/car_level.xml` (MuJoCo MJCF) for the 4-wheel rover.\n"
+            "1. Write `/workspace/level_contract.json` with the 3D city street entities.\n"
+            "2. Write `/workspace/rover.urdf` and `/workspace/car_level.xml` (MuJoCo MJCF) for the 4-wheel street rover.\n"
             "3. Print ONLY the valid JSON for the LevelContract to stdout.\n"
         )
         if seed_blockade:
             prompt += (
-                "\nIMPORTANT FOR FIRST-PASS GENERATION: Place 'blast_door' directly across the driving lane "
-                "at (4.0, 1.5, 4.0) with scale 2.5 so the Visual QA Tester Agent visually detects and patches it live."
+                "\nIMPORTANT FOR FIRST-PASS GENERATION: Place 'blast_door' (asset_key='obstacle', scale=2.6, solid=true) "
+                "directly in the center of the street at (19.0, 1.5, 0.0) so the Visual QA Tester Agent visually detects "
+                "the roadblock and shifts it onto the sidewalk (z = 6.5) during the live verification loop."
             )
 
         extracted_sandbox_files: List[str] = []
         parsed_entities: List[Dict[str, Any]] = []
 
-        if self.api_key:
+        if self.api_key and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here"):
             try:
                 from google import genai
 
@@ -99,62 +185,16 @@ class LevelArchitectAgent:
                 if "```" in raw:
                     raw = raw.split("```")[1].removeprefix("json").strip()
                 parsed = json.loads(raw)
-                if isinstance(parsed.get("entities"), list):
+                if isinstance(parsed.get("entities"), list) and len(parsed["entities"]) >= 3:
                     parsed_entities = parsed["entities"]
             except Exception as exc:
                 print(f"[ArchitectAgent] Fallback triggered ({exc})")
 
         if not parsed_entities:
-            parsed_entities = [
-                {
-                    "id": "spawn_pad",
-                    "asset_key": "player",
-                    "x": 0.0,
-                    "y": 0.35,
-                    "z": 0.0,
-                    "scale": 1.0,
-                    "solid": False,
-                },
-                {
-                    "id": "data_core",
-                    "asset_key": "goal",
-                    "x": 8.0,
-                    "y": 0.5,
-                    "z": 8.0,
-                    "scale": 1.0,
-                    "solid": False,
-                },
-                {
-                    "id": "track_barrier_west",
-                    "asset_key": "obstacle",
-                    "x": 2.0,
-                    "y": 1.2,
-                    "z": 5.5,
-                    "scale": 2.0,
-                    "solid": True,
-                },
-                {
-                    "id": "track_barrier_east",
-                    "asset_key": "obstacle",
-                    "x": 6.0,
-                    "y": 1.2,
-                    "z": 2.5,
-                    "scale": 2.0,
-                    "solid": True,
-                },
-                {
-                    "id": "blast_door",
-                    "asset_key": "obstacle",
-                    "x": 4.0,
-                    "y": 1.5,
-                    "z": 4.0,
-                    "scale": 2.5,
-                    "solid": True,
-                },
-            ]
+            parsed_entities = default_city_street_entities()
 
         skin_info = generate_vehicle_skin_texture(
-            prompt=directive.get("skin_prompt", f"Rover skin for {theme}"),
+            prompt=directive.get("skin_prompt", f"GTA street rally rover skin for {theme}"),
             project_id=project_id,
             skin_name="chassis_skin.png",
             api_key=self.api_key,
@@ -170,7 +210,7 @@ class LevelArchitectAgent:
             "project_id": project_id,
             "theme": theme,
             "world_bounds": bounds,
-            "environmental_hazard": directive.get("environmental_hazard", "low_clearance_gap_40cm"),
+            "environmental_hazard": directive.get("environmental_hazard", "mid_avenue_blast_door_blockade"),
             "required_capability": directive.get("required_capability", "high_torque_4wd"),
             "car_physics": car_physics,
             "reward_part": reward_part,

@@ -24,10 +24,10 @@ pub fn spawn_level_from_contract(
     session.downloaded_skin_asset = local_skin_asset.clone();
     session.victory = false;
     session.upgrade_equipped = false;
-    session.rover_yaw = -std::f32::consts::FRAC_PI_4;
+    session.rover_yaw = 0.0;
     session.rover_speed = 0.0;
     session.status_banner = format!(
-        "Commissioned [{}] | GTA Chase Cam Active | [W/S] Drive/Reverse | [A/D] Steer | [Q] Visual QA | [U] Equip {} | [E] Export",
+        "City District [{}] | GTA Street View | [W/S] Drive/Reverse | [A/D] Steer | [Q] Visual QA | [U] Equip {} | [E] Export",
         contract.project_id, contract.reward_part.part_id
     );
 
@@ -50,19 +50,25 @@ pub fn spawn_level_from_contract(
     let taillight_mesh = meshes.add(Cuboid::new(0.05, 0.08, 0.65));
     let taillight_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.15, 0.15),
-        emissive: LinearRgba::rgb(2.5, 0.1, 0.1),
+        emissive: LinearRgba::rgb(2.8, 0.1, 0.1),
         ..default()
     });
     let headlight_mesh = meshes.add(Cuboid::new(0.05, 0.08, 0.65));
     let headlight_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.9, 0.98, 1.0),
-        emissive: LinearRgba::rgb(2.0, 2.4, 2.8),
+        emissive: LinearRgba::rgb(2.2, 2.5, 3.0),
         ..default()
     });
     let arm_mesh = meshes.add(Cuboid::new(0.45, 0.08, 0.08));
     let arm_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.55, 0.1),
         metallic: 0.7,
+        ..default()
+    });
+
+    let neon_window_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.85, 1.0),
+        emissive: LinearRgba::rgb(0.2, 1.1, 1.6),
         ..default()
     });
 
@@ -79,7 +85,6 @@ pub fn spawn_level_from_contract(
 
                 let initial_rot = Quat::from_rotation_y(session.rover_yaw);
 
-                // Spawn articulated 4-wheel MuJoCo Rover (+X is forward)
                 commands
                     .spawn((
                         PbrBundle {
@@ -101,21 +106,18 @@ pub fn spawn_level_from_contract(
                         },
                     ))
                     .with_children(|parent| {
-                        // Cockpit / Cabin (slightly rear of center for classic off-road rover silhouette)
                         parent.spawn(PbrBundle {
                             mesh: cab_mesh.clone(),
                             material: cab_mat.clone(),
                             transform: Transform::from_xyz(-0.10, 0.24, 0.0),
                             ..default()
                         });
-                        // Glowing red rear light bar (visible in GTA behind-the-car view!)
                         parent.spawn(PbrBundle {
                             mesh: taillight_mesh.clone(),
                             material: taillight_mat.clone(),
                             transform: Transform::from_xyz(-0.73, 0.06, 0.0),
                             ..default()
                         });
-                        // Front headlights
                         parent.spawn(PbrBundle {
                             mesh: headlight_mesh.clone(),
                             material: headlight_mat.clone(),
@@ -138,7 +140,6 @@ pub fn spawn_level_from_contract(
                                 ..default()
                             });
                         }
-                        // 2-DOF Modular Actuator Arm Mount on front hood
                         parent.spawn(PbrBundle {
                             mesh: arm_mesh.clone(),
                             material: arm_mat.clone(),
@@ -151,46 +152,99 @@ pub fn spawn_level_from_contract(
             "goal" => {
                 commands.spawn((
                     PbrBundle {
-                        mesh: meshes.add(Torus::new(0.45 * spec.scale, 0.95 * spec.scale)),
+                        mesh: meshes.add(Torus::new(0.45 * spec.scale, 1.15 * spec.scale)),
                         material: materials.add(StandardMaterial {
                             base_color: Color::srgb(0.1, 1.0, 0.45),
-                            emissive: LinearRgba::rgb(0.2, 2.0, 0.5),
+                            emissive: LinearRgba::rgb(0.2, 2.2, 0.55),
                             ..default()
                         }),
-                        transform: Transform::from_xyz(spec.x, spec.y + 0.6, spec.z)
-                            .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                        transform: Transform::from_xyz(spec.x, spec.y + 0.8, spec.z)
+                            .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
                         ..default()
                     },
                     StudioEntity {
                         id: spec.id.clone(),
                         role: EntityRole::Goal,
                         solid: false,
-                        half_extents: Vec3::splat(0.9 * spec.scale),
+                        half_extents: Vec3::splat(1.1 * spec.scale),
                     },
                 ));
             }
+            "building" => {
+                let width = 6.2;
+                let height = 3.0 * spec.scale;
+                let depth = 5.2;
+                let bldg_mat = materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.13, 0.16, 0.23),
+                    metallic: 0.65,
+                    perceptual_roughness: 0.35,
+                    ..default()
+                });
+                let accent_strip_mesh = meshes.add(Cuboid::new(width + 0.08, 0.16, depth + 0.08));
+
+                commands
+                    .spawn((
+                        PbrBundle {
+                            mesh: meshes.add(Cuboid::new(width, height, depth)),
+                            material: bldg_mat,
+                            transform: Transform::from_xyz(spec.x, height * 0.5, spec.z),
+                            ..default()
+                        },
+                        StudioEntity {
+                            id: spec.id.clone(),
+                            role: EntityRole::Building,
+                            solid: true,
+                            half_extents: Vec3::new(width * 0.5, height * 0.5, depth * 0.5),
+                        },
+                    ))
+                    .with_children(|parent| {
+                        // Lit cyber-city window bands
+                        parent.spawn(PbrBundle {
+                            mesh: accent_strip_mesh.clone(),
+                            material: neon_window_mat.clone(),
+                            transform: Transform::from_xyz(0.0, height * 0.25, 0.0),
+                            ..default()
+                        });
+                        parent.spawn(PbrBundle {
+                            mesh: accent_strip_mesh,
+                            material: neon_window_mat.clone(),
+                            transform: Transform::from_xyz(0.0, -height * 0.15, 0.0),
+                            ..default()
+                        });
+                    });
+            }
             _ => {
+                // Street roadblock / traffic barrier
+                let is_blast_door = spec.id == "blast_door";
+                let width = if is_blast_door {
+                    1.1 * spec.scale
+                } else {
+                    1.2 * spec.scale
+                };
+                let height = 1.0 * spec.scale;
+                let depth = if is_blast_door {
+                    2.4 * spec.scale
+                } else {
+                    1.2 * spec.scale
+                };
                 commands.spawn((
                     PbrBundle {
-                        mesh: meshes.add(Cuboid::new(
-                            1.2 * spec.scale,
-                            1.2 * spec.scale,
-                            1.2 * spec.scale,
-                        )),
+                        mesh: meshes.add(Cuboid::new(width, height, depth)),
                         material: materials.add(StandardMaterial {
-                            base_color: Color::srgb(0.92, 0.24, 0.24),
+                            base_color: Color::srgb(0.95, 0.22, 0.20),
+                            emissive: LinearRgba::rgb(0.55, 0.05, 0.05),
                             metallic: 0.5,
                             perceptual_roughness: 0.4,
                             ..default()
                         }),
-                        transform: Transform::from_xyz(spec.x, spec.y, spec.z),
+                        transform: Transform::from_xyz(spec.x, height * 0.5, spec.z),
                         ..default()
                     },
                     StudioEntity {
                         id: spec.id.clone(),
                         role: EntityRole::Obstacle,
                         solid: spec.solid,
-                        half_extents: Vec3::splat(0.6 * spec.scale),
+                        half_extents: Vec3::new(width * 0.5, height * 0.5, depth * 0.5),
                     },
                 ));
             }

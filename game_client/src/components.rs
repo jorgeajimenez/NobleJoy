@@ -6,6 +6,7 @@ pub enum EntityRole {
     Player,
     Goal,
     Obstacle,
+    Building,
 }
 
 #[derive(Component, Debug, Clone)]
@@ -49,8 +50,8 @@ impl Default for GameSessionState {
             reward_part: RewardPartSpec::default(),
             sanity_check: PhysicsSanityCheck::default(),
             speed_mps: 0.0,
-            // Point initially toward (8, 0, 8) -> +X, +Z diagonal (yaw = -PI/4 around Y)
-            rover_yaw: -std::f32::consts::FRAC_PI_4,
+            // Point straight down Main City Avenue (+X axis, yaw = 0.0)
+            rover_yaw: 0.0,
             rover_speed: 0.0,
             mujoco_engine: String::new(),
             downloaded_skin_asset: None,

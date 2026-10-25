@@ -18,31 +18,32 @@ class VisualQATesterAgent:
         image_bytes: Optional[bytes],
         current_scene: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Analyze viewport PNG + MuJoCo telemetry to patch visual corridor blockers and vehicle physics."""
+        """Analyze viewport PNG + MuJoCo telemetry to clear street blockades and boost vehicle street performance."""
         audit_prompt = (
             "You are the Visual QA Playtester & Robotics Physics Auditor Agent (Track 2 Verification Loop).\n"
-            "Inspect the attached viewport frame capture from the Rust Bevy 3D driving client along with the current "
-            "scene layout and MuJoCo rover physics configuration:\n"
+            "Inspect the attached GTA-perspective street viewport capture from the Rust Bevy 3D driving client along with "
+            "the current city avenue layout and MuJoCo rover physics configuration:\n"
             f"{json.dumps(current_scene, indent=2)}\n\n"
-            "1. Check if any solid obstacle (such as 'blast_door') blocks the driving lane between 'spawn_pad' and 'data_core'.\n"
-            "2. Check if the MuJoCo rover needs increased wheel_friction or motor_torque_nm to clear the track hazard.\n"
+            "1. Check if any solid obstacle (such as 'blast_door' at x=19, z=0) blocks the main street avenue between "
+            "'spawn_pad' (0, 0) and 'data_core' (38, 0). Move it onto the sidewalk at z=6.5 so the street is clear.\n"
+            "2. Boost the MuJoCo rover's wheel_friction and motor_torque_nm for responsive street handling.\n"
             "Output ONLY valid JSON with this exact schema:\n"
             "{\n"
             f'  "project_id": "{project_id}",\n'
             '  "qa_status": "hotfix_required" | "passed",\n'
             '  "critique": "Concise visual + physics QA explanation",\n'
             '  "hotfixes": [\n'
-            '    {"id": "blast_door", "action": "reposition", "x": 9.5, "y": 1.5, "z": 4.0}\n'
+            '    {"id": "blast_door", "action": "reposition", "x": 19.0, "y": 1.5, "z": 6.5}\n'
             "  ],\n"
             '  "physics_hotfix": {\n'
-            '    "motor_torque_nm": 5.5,\n'
-            '    "wheel_friction": 1.55,\n'
+            '    "motor_torque_nm": 6.0,\n'
+            '    "wheel_friction": 1.65,\n'
             '    "servo_torque_kg_cm": 11.0\n'
             "  }\n"
             "}"
         )
 
-        if self.api_key:
+        if self.api_key and self.api_key not in ("your_gemini_key", "your_gemini_api_key_here"):
             try:
                 from google import genai
 
@@ -70,7 +71,7 @@ class VisualQATesterAgent:
                 if "qa_status" in parsed and "hotfixes" in parsed:
                     parsed.setdefault(
                         "physics_hotfix",
-                        {"motor_torque_nm": 5.5, "wheel_friction": 1.55, "servo_torque_kg_cm": 11.0},
+                        {"motor_torque_nm": 6.0, "wheel_friction": 1.65, "servo_torque_kg_cm": 11.0},
                     )
                     return parsed
             except Exception as exc:
@@ -80,21 +81,21 @@ class VisualQATesterAgent:
             "project_id": project_id,
             "qa_status": "hotfix_required",
             "critique": (
-                "Visual + MuJoCo QA Audit: (1) 'blast_door' at (4.0, 4.0) blocks the driving lane to 'data_core'; "
-                "repositioning to (9.5, 1.5, 4.0). (2) Boosting MuJoCo drive torque to 5.5 N*m and tire friction to 1.55."
+                "Visual + MuJoCo Street QA Audit: (1) 'blast_door' roadblock at (19.0, 0.0) seals off Main Cyber Avenue; "
+                "shifting roadblock onto the sidewalk at (19.0, 1.5, 6.5). (2) Upgrading MuJoCo street drive torque to 6.0 N*m."
             ),
             "hotfixes": [
                 {
                     "id": "blast_door",
                     "action": "reposition",
-                    "x": 9.5,
+                    "x": 19.0,
                     "y": 1.5,
-                    "z": 4.0,
+                    "z": 6.5,
                 }
             ],
             "physics_hotfix": {
-                "motor_torque_nm": 5.5,
-                "wheel_friction": 1.55,
+                "motor_torque_nm": 6.0,
+                "wheel_friction": 1.65,
                 "servo_torque_kg_cm": 11.0,
             },
         }

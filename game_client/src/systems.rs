@@ -17,15 +17,89 @@ use std::collections::HashMap;
 
 pub fn build_offline_preview_contract() -> LevelContract {
     let mut bounds = HashMap::new();
-    bounds.insert("x".to_string(), 32.0);
-    bounds.insert("z".to_string(), 32.0);
+    bounds.insert("x".to_string(), 80.0);
+    bounds.insert("z".to_string(), 40.0);
+
+    let mut entities = vec![
+        EntitySpec {
+            id: "spawn_pad".to_string(),
+            asset_key: "player".to_string(),
+            x: 0.0,
+            y: 0.35,
+            z: 0.0,
+            scale: 1.0,
+            solid: false,
+        },
+        EntitySpec {
+            id: "data_core".to_string(),
+            asset_key: "goal".to_string(),
+            x: 38.0,
+            y: 0.5,
+            z: 0.0,
+            scale: 1.2,
+            solid: false,
+        },
+        EntitySpec {
+            id: "street_chicane_left".to_string(),
+            asset_key: "obstacle".to_string(),
+            x: 12.0,
+            y: 0.9,
+            z: -2.4,
+            scale: 1.3,
+            solid: true,
+        },
+        EntitySpec {
+            id: "street_chicane_right".to_string(),
+            asset_key: "obstacle".to_string(),
+            x: 26.0,
+            y: 0.9,
+            z: 2.4,
+            scale: 1.3,
+            solid: true,
+        },
+        EntitySpec {
+            id: "blast_door".to_string(),
+            asset_key: "obstacle".to_string(),
+            x: 19.0,
+            y: 1.5,
+            z: 0.0,
+            scale: 2.6,
+            solid: true,
+        },
+    ];
+
+    let heights = [2.4, 3.6, 2.8, 4.2, 3.1, 3.8, 2.6];
+    for (idx, bx) in [-6.0_f32, 4.0, 14.0, 24.0, 34.0, 44.0, 54.0]
+        .iter()
+        .enumerate()
+    {
+        let sc = heights[idx % heights.len()];
+        entities.push(EntitySpec {
+            id: format!("city_block_north_{idx}"),
+            asset_key: "building".to_string(),
+            x: *bx,
+            y: sc * 1.5,
+            z: -9.5,
+            scale: sc,
+            solid: true,
+        });
+        entities.push(EntitySpec {
+            id: format!("city_block_south_{idx}"),
+            asset_key: "building".to_string(),
+            x: *bx,
+            y: sc * 1.5,
+            z: 9.5,
+            scale: sc,
+            solid: true,
+        });
+    }
 
     LevelContract {
         project_id: "local_preview".to_string(),
-        theme: "offline_rover_proving_ground".to_string(),
+        theme: "neon_downtown_avenue".to_string(),
         world_bounds: bounds,
-        environmental_hazard: "low_clearance_gap_40cm + blast_door".to_string(),
-        required_capability: "high_torque_4wd + 2-DOF arm".to_string(),
+        environmental_hazard: "mid_avenue_blast_door_blockade".to_string(),
+        required_capability: "high_torque_4wd + street_drift_grip".to_string(),
         skin_url: String::new(),
         mjcf_url: String::new(),
         urdf_url: String::new(),
@@ -43,57 +117,11 @@ pub fn build_offline_preview_contract() -> LevelContract {
             rated_torque_kg_cm: 1.8,
             torque_valid: false,
             upgrade_equipped: false,
-            motor_torque_nm: 3.5,
-            wheel_friction: 1.2,
+            motor_torque_nm: 4.0,
+            wheel_friction: 1.35,
         },
         sandbox_files: vec![],
-        entities: vec![
-            EntitySpec {
-                id: "spawn_pad".to_string(),
-                asset_key: "player".to_string(),
-                x: 0.0,
-                y: 0.35,
-                z: 0.0,
-                scale: 1.0,
-                solid: false,
-            },
-            EntitySpec {
-                id: "data_core".to_string(),
-                asset_key: "goal".to_string(),
-                x: 11.0,
-                y: 0.5,
-                z: 11.0,
-                scale: 1.0,
-                solid: false,
-            },
-            EntitySpec {
-                id: "track_barrier_west".to_string(),
-                asset_key: "obstacle".to_string(),
-                x: 2.5,
-                y: 1.2,
-                z: 6.5,
-                scale: 2.0,
-                solid: true,
-            },
-            EntitySpec {
-                id: "track_barrier_east".to_string(),
-                asset_key: "obstacle".to_string(),
-                x: 6.5,
-                y: 1.2,
-                z: 2.5,
-                scale: 2.0,
-                solid: true,
-            },
-            EntitySpec {
-                id: "blast_door".to_string(),
-                asset_key: "obstacle".to_string(),
-                x: 5.0,
-                y: 1.5,
-                z: 5.0,
-                scale: 2.4,
-                solid: true,
-            },
-        ],
+        entities,
     }
 }
 
@@ -106,33 +134,96 @@ pub fn setup_base_environment(
     net: Res<StudioNetworkChannel>,
     mut session: ResMut<GameSessionState>,
 ) {
-    // Large asphalt/industrial floor plane
+    // 1. Base urban ground lot
     commands.spawn(PbrBundle {
-        mesh: meshes.add(Plane3d::default().mesh().size(80.0, 80.0)),
+        mesh: meshes.add(Plane3d::default().mesh().size(140.0, 90.0)),
         material: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.10, 0.12, 0.16),
-            perceptual_roughness: 0.88,
+            base_color: Color::srgb(0.07, 0.08, 0.11),
+            perceptual_roughness: 0.92,
             ..default()
         }),
+        transform: Transform::from_xyz(24.0, -0.02, 0.0),
         ..default()
     });
 
-    // Reference grid strips along the road so speed and steering feel palpable in GTA view
-    let stripe_mesh = meshes.add(Cuboid::new(1.2, 0.02, 0.18));
-    let stripe_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.25, 0.35, 0.48),
-        emissive: LinearRgba::rgb(0.05, 0.12, 0.22),
+    // 2. Paved Main City Avenue (along +X from -20 to +70, width 9.6m)
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(Cuboid::new(96.0, 0.04, 9.6)),
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.14, 0.16, 0.20),
+            perceptual_roughness: 0.85,
+            ..default()
+        }),
+        transform: Transform::from_xyz(24.0, 0.0, 0.0),
         ..default()
     });
-    for i in -8..=16 {
-        let p = i as f32 * 2.2;
+
+    // 3. Raised concrete sidewalks & curbs lining both sides of the street (Z = -5.8 and Z = +5.8)
+    let sidewalk_mesh = meshes.add(Cuboid::new(96.0, 0.18, 2.2));
+    let sidewalk_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.26, 0.29, 0.34),
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    for side_z in [-5.8_f32, 5.8_f32] {
         commands.spawn(PbrBundle {
-            mesh: stripe_mesh.clone(),
-            material: stripe_mat.clone(),
-            transform: Transform::from_xyz(p, 0.01, p)
-                .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_4)),
+            mesh: sidewalk_mesh.clone(),
+            material: sidewalk_mat.clone(),
+            transform: Transform::from_xyz(24.0, 0.09, side_z),
             ..default()
         });
+    }
+
+    // 4. Dashed yellow center-line road markings + white lane boundary lines
+    let dash_mesh = meshes.add(Cuboid::new(1.8, 0.05, 0.18));
+    let yellow_dash_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.12),
+        emissive: LinearRgba::rgb(0.8, 0.6, 0.05),
+        ..default()
+    });
+    let pole_mesh = meshes.add(Cylinder::new(0.08, 4.2));
+    let pole_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.3, 0.35, 0.42),
+        metallic: 0.8,
+        ..default()
+    });
+    let lamp_bulb_mesh = meshes.add(Cuboid::new(0.35, 0.12, 0.65));
+    let lamp_bulb_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.92, 0.75),
+        emissive: LinearRgba::rgb(2.5, 2.0, 1.2),
+        ..default()
+    });
+
+    for i in -4..=18 {
+        let x_pos = i as f32 * 4.0;
+        commands.spawn(PbrBundle {
+            mesh: dash_mesh.clone(),
+            material: yellow_dash_mat.clone(),
+            transform: Transform::from_xyz(x_pos, 0.01, 0.0),
+            ..default()
+        });
+
+        // Streetlamps every 12m along the sidewalks
+        if i % 3 == 0 {
+            for side_z in [-5.0_f32, 5.0_f32] {
+                commands.spawn(PbrBundle {
+                    mesh: pole_mesh.clone(),
+                    material: pole_mat.clone(),
+                    transform: Transform::from_xyz(x_pos, 2.1, side_z),
+                    ..default()
+                });
+                commands.spawn(PbrBundle {
+                    mesh: lamp_bulb_mesh.clone(),
+                    material: lamp_bulb_mat.clone(),
+                    transform: Transform::from_xyz(
+                        x_pos,
+                        4.2,
+                        side_z - side_z.signum() * 0.35,
+                    ),
+                    ..default()
+                });
+            }
+        }
     }
 
     commands.spawn(DirectionalLightBundle {
@@ -141,15 +232,16 @@ pub fn setup_base_environment(
             shadows_enabled: true,
             ..default()
         },
-        transform: Transform::from_xyz(12.0, 26.0, -10.0).looking_at(Vec3::new(5.0, 0.0, 5.0), Vec3::Y),
+        transform: Transform::from_xyz(12.0, 28.0, -14.0)
+            .looking_at(Vec3::new(18.0, 0.0, 0.0), Vec3::Y),
         ..default()
     });
 
-    // GTA Third-Person Chase Camera: starts right behind and slightly above the rover at (0, 0.35, 0)
+    // GTA Third-Person Street Chase Camera: right behind and slightly above the car looking down the avenue (+X)
     commands.spawn((
         Camera3dBundle {
-            transform: Transform::from_xyz(-4.2, 2.8, -4.2)
-                .looking_at(Vec3::new(3.0, 0.8, 3.0), Vec3::Y),
+            transform: Transform::from_xyz(-5.2, 2.65, 0.0)
+                .looking_at(Vec3::new(6.0, 0.7, 0.0), Vec3::Y),
             ..default()
         },
         ChaseCamera,
@@ -157,7 +249,7 @@ pub fn setup_base_environment(
 
     commands.spawn((
         TextBundle::from_section(
-            "JORGE RUST CLIENT + MUJOCO ROVER | Initializing GTA Chase Camera...",
+            "JORGE RUST CLIENT + MUJOCO STREET ROVER | Initializing GTA Street View...",
             TextStyle {
                 font_size: 18.0,
                 color: Color::WHITE,
@@ -186,11 +278,11 @@ pub fn setup_base_environment(
     );
 
     session.status_banner =
-        "GTA Chase View Ready! [W/S] Accelerate/Reverse | [A/D] Steer | [Q] Visual QA Hotfix | [U] Snap Upgrade"
+        "GTA Street View Ready! [W/S] Accelerate/Reverse | [A/D] Steer | [Q] Visual QA Roadblock Hotfix | [U] Snap Upgrade"
             .to_string();
     request_commission_level(
         &net,
-        "Design an industrial rover test track with a shielded reactor core and high-torque wheel upgrade.".to_string(),
+        "Design a neon downtown city avenue with skyscrapers, street chicanes, a central roadblock, and a high-torque wheel upgrade.".to_string(),
     );
 }
 
@@ -226,16 +318,16 @@ pub fn handle_studio_hotkeys(
             None,
         );
         session.status_banner =
-            "Loaded Local Offline Preview Track | [W/S] Drive | [A/D] Steer | [Q] Simulate QA Hotfix | [U] Toggle M3 Upgrade"
+            "Loaded Local City Street Preview | [W/S] Drive | [A/D] Steer | [Q] Simulate QA Roadblock Hotfix | [U] Toggle Upgrade"
                 .to_string();
     }
 
     if keys.just_pressed(KeyCode::KeyC) {
         session.status_banner =
-            "Studio Director & Architect generating new MuJoCo level + vehicle skin...".to_string();
+            "Studio Director & Architect commissioning new City Avenue + vehicle skin...".to_string();
         request_commission_level(
             &net,
-            "Design an abandoned hangar rover track with low clearance gap and M3 actuator mount."
+            "Design an industrial harbor street avenue with a central blast_door blockade and M3 actuator mount."
                 .to_string(),
         );
     }
@@ -246,21 +338,21 @@ pub fn handle_studio_hotkeys(
             let offline_delta = vec![HotfixDelta {
                 id: "blast_door".to_string(),
                 action: "reposition".to_string(),
-                x: 9.5,
+                x: 19.0,
                 y: 1.5,
-                z: 4.0,
+                z: 6.5,
             }];
             apply_hotfix_deltas(&mut transform_query, &offline_delta);
-            session.sanity_check.motor_torque_nm = 5.5;
-            session.sanity_check.wheel_friction = 1.55;
+            session.sanity_check.motor_torque_nm = 6.0;
+            session.sanity_check.wheel_friction = 1.65;
             session.sanity_check.rated_torque_kg_cm = 11.0;
             session.sanity_check.torque_valid = true;
             session.status_banner =
-                "QA Status [HOTFIX_APPLIED]: Repositioned 'blast_door' out of lane & boosted rover torque to 5.5 N*m!"
+                "QA Status [HOTFIX_APPLIED]: Shifted 'blast_door' roadblock onto sidewalk (z=6.5) & boosted street torque to 6.0 N*m!"
                     .to_string();
         } else {
             session.status_banner = format!(
-                "Streaming viewport PNG + MuJoCo telemetry to Visual QA Agent for [{project_id}]..."
+                "Streaming street viewport PNG + MuJoCo telemetry to Visual QA Agent for [{project_id}]..."
             );
             request_qa_audit(&net, project_id.clone(), snap_path);
         }
@@ -275,8 +367,8 @@ pub fn handle_studio_hotkeys(
             session.sanity_check.rated_torque_kg_cm = 11.0;
             session.sanity_check.torque_valid = true;
         } else {
-            session.sanity_check.motor_torque_nm = 3.5;
-            session.sanity_check.wheel_friction = 1.2;
+            session.sanity_check.motor_torque_nm = 4.0;
+            session.sanity_check.wheel_friction = 1.35;
             session.sanity_check.rated_torque_kg_cm = 1.8;
             session.sanity_check.torque_valid = false;
         }
@@ -333,7 +425,6 @@ pub fn poll_studio_network_events(
             StudioNetEvent::MujocoStepCompleted(step) => {
                 session.step_in_flight = false;
                 session.mujoco_engine = step.engine;
-                session.speed_mps = step.chassis.speed_mps;
                 session.sanity_check = step.sanity_check;
             }
             StudioNetEvent::QaReportReceived(report) => {
@@ -357,7 +448,7 @@ pub fn poll_studio_network_events(
             StudioNetEvent::NetworkError(_err) => {
                 session.step_in_flight = false;
                 session.status_banner =
-                    "GTA Chase Cam Active (Offline Preview) | [W/S] Drive | [A/D] Steer | [Q] QA Hotfix | [U] Snap Upgrade | [C] Retry Studio"
+                    "GTA Street View (Offline Preview) | [W/S] Drive | [A/D] Steer | [Q] QA Roadblock Hotfix | [U] Snap Upgrade | [C] Retry Studio"
                         .to_string();
             }
         }
@@ -389,7 +480,7 @@ pub fn player_movement_and_collision(
     }
 
     if keys.just_pressed(KeyCode::KeyR) {
-        session.rover_yaw = -std::f32::consts::FRAC_PI_4;
+        session.rover_yaw = 0.0;
         session.rover_speed = 0.0;
         for (ent, mut transform) in query.iter_mut() {
             if ent.role == EntityRole::Player {
@@ -416,30 +507,27 @@ pub fn player_movement_and_collision(
         );
     }
 
-    // Car-relative Ackermann / GTA driving physics (+X local is car forward)
     let max_speed = if session.sanity_check.upgrade_equipped {
-        11.5
+        13.5
     } else {
-        8.0
+        9.5
     };
     let accel_rate = if session.sanity_check.upgrade_equipped {
-        18.0
+        20.0
     } else {
-        13.0
+        14.5
     };
 
     if throttle != 0.0 {
         session.rover_speed =
             (session.rover_speed + throttle * accel_rate * dt).clamp(-max_speed * 0.6, max_speed);
     } else {
-        // Natural rolling drag
         session.rover_speed *= (1.0 - 4.5 * dt).max(0.0);
         if session.rover_speed.abs() < 0.05 {
             session.rover_speed = 0.0;
         }
     }
 
-    // Steer heading angle (`A` turns left, `D` turns right)
     if steering != 0.0 {
         let turn_dir = if session.rover_speed >= -0.1 {
             1.0
@@ -449,7 +537,6 @@ pub fn player_movement_and_collision(
         session.rover_yaw += steering * 2.1 * dt * turn_dir;
     }
 
-    // In Bevy's right-handed Y-up coordinate system, Quat::from_rotation_y(yaw) rotates +X to (cos(yaw), 0, -sin(yaw))
     let forward = Vec3::new(session.rover_yaw.cos(), 0.0, -session.rover_yaw.sin());
     let velocity = forward * session.rover_speed * dt;
     session.speed_mps = session.rover_speed.abs();
@@ -462,7 +549,7 @@ pub fn player_movement_and_collision(
         match ent.role {
             EntityRole::Player => player_current = Some((ent.half_extents, transform.translation)),
             EntityRole::Goal => goal_pos = Some(transform.translation),
-            EntityRole::Obstacle if ent.solid => {
+            EntityRole::Obstacle | EntityRole::Building if ent.solid => {
                 obstacles.push((ent.half_extents, transform.translation));
             }
             _ => {}
@@ -493,10 +580,10 @@ pub fn player_movement_and_collision(
 
     if !blocked {
         if let Some(g_pos) = goal_pos {
-            if proposed.distance(g_pos) < 1.65 && !session.victory {
+            if proposed.distance(g_pos) < 2.0 && !session.victory {
                 session.victory = true;
                 session.status_banner = format!(
-                    "OBJECTIVE COMPLETE! Unlocked [{}] ({}) | Press [U] Snap Part & Verify Torque | [E] Export STLs/BOM/Firmware",
+                    "STREET CHECKPOINT REACHED! Unlocked [{}] ({}) | Press [U] Snap Part | [E] Export STLs/BOM/Firmware",
                     session.reward_part.part_id, session.reward_part.mount_type
                 );
             }
@@ -521,13 +608,9 @@ pub fn update_gta_chase_camera(
         return;
     };
 
-    // Forward vector along car's heading (+X rotated by rover_yaw)
     let forward = Vec3::new(session.rover_yaw.cos(), 0.0, -session.rover_yaw.sin());
-
-    // Classic GTA third-person camera offset: 5.2 units behind the bumper and 2.65 units above the roof
-    let desired_cam_pos = player_tf.translation - forward * 5.2 + Vec3::new(0.0, 2.65, 0.0);
-    // Look slightly ahead of the car's hood so the horizon, obstacles, and reactor core stay framed
-    let look_target = player_tf.translation + forward * 3.8 + Vec3::new(0.0, 0.55, 0.0);
+    let desired_cam_pos = player_tf.translation - forward * 5.2 + Vec3::new(0.0, 2.6, 0.0);
+    let look_target = player_tf.translation + forward * 4.5 + Vec3::new(0.0, 0.55, 0.0);
 
     let smooth = (10.0 * time.delta_seconds()).clamp(0.0, 1.0);
     cam_tf.translation = cam_tf.translation.lerp(desired_cam_pos, smooth);
@@ -547,8 +630,8 @@ pub fn update_hud_overlay(
 
     for mut text in text_query.iter_mut() {
         text.sections[0].value = format!(
-            "JORGE RUST CLIENT <-> GRETCHEN STUDIO (Gemini 4 Argon + MuJoCo)\n\
-             Track: [{}] | Speed: {:.1} m/s | Hazard: {} | Skin: {}\n\
+            "JORGE RUST CLIENT <-> GRETCHEN STUDIO (Gemini 4 Argon + MuJoCo Street Sim)\n\
+             District: [{}] | Speed: {:.1} m/s | Hazard: {} | Skin: {}\n\
              MuJoCo Telemetry -> Drive Torque: {:.1} N*m | Friction: {:.2} | CoM: {} | Servo Torque (tau=r*F): {:.1}/{:.1} kg*cm [{}]\n\
              {}",
             session.theme,
