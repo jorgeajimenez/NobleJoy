@@ -10,7 +10,7 @@ use components::GameSessionState;
 use network::StudioNetworkChannel;
 use systems::{
     handle_studio_hotkeys, player_movement_and_collision, poll_studio_network_events,
-    setup_base_environment, update_hud_overlay,
+    setup_base_environment, update_gta_chase_camera, update_hud_overlay,
 };
 
 fn main() {
@@ -32,6 +32,7 @@ fn main() {
                 handle_studio_hotkeys,
                 poll_studio_network_events,
                 player_movement_and_collision,
+                update_gta_chase_camera.after(player_movement_and_collision),
                 update_hud_overlay,
             ),
         )
