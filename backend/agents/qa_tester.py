@@ -82,11 +82,16 @@ class VisualQATesterAgent:
                         }
                     )
 
-                interaction = client.interactions.create(
-                    model=self.model_id,
-                    input=inputs,
-                    generation_config={"thinking_level": "low"},
-                )
+                prev_id = current_scene.get("managed_interaction_id") or None
+                create_kwargs: Dict[str, Any] = {
+                    "model": self.model_id,
+                    "input": inputs,
+                    "generation_config": {"thinking_level": "low"},
+                }
+                if prev_id:
+                    create_kwargs["previous_interaction_id"] = prev_id
+
+                interaction = client.interactions.create(**create_kwargs)
                 raw = (getattr(interaction, "output_text", None) or "").strip()
                 if "```" in raw:
                     raw = raw.split("```")[1].removeprefix("json").strip()

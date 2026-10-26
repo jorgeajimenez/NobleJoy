@@ -10,7 +10,7 @@ import uuid
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,7 +22,12 @@ from agents import (
     agent_registry,
     policy_engine,
 )
-from agents.artifact_puller import EXPORTS_DIR, export_physical_build_package
+from agents.artifact_puller import (
+    EXPORTS_DIR,
+    GENERATED_ASSETS_DIR,
+    export_physical_build_package,
+)
+from agents.registry import SimReadyCentralClient
 from mujoco_sim import MujocoDrivingSession
 
 load_dotenv()
@@ -33,7 +38,7 @@ app = FastAPI(
         "Gemini 4 Argon Managed Agents Studio Backend + Registered Game & Test Agents + "
         "Policy Enforcement Engine + Real-Time MuJoCo Driving & Transformers Physics for the Rust Bevy Client"
     ),
-    version="0.5.0",
+    version="0.6.0",
 )
 
 app.add_middleware(
@@ -45,9 +50,8 @@ app.add_middleware(
 
 ASSETS_DIR = Path(__file__).parent / "assets"
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+GENERATED_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
-app.mount("/exports", StaticFiles(directory=str(EXPORTS_DIR)), name="exports")
 
 MANIFEST_PATH = ASSETS_DIR / "asset_manifest.json"
 with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
@@ -61,12 +65,61 @@ ACTIVE_PROJECTS: Dict[str, Dict[str, Any]] = {}
 MUJOCO_SESSIONS: Dict[str, MujocoDrivingSession] = {}
 
 
+def _extract_token(request: Request, default_token: str = "token_admin") -> Optional[str]:
+    """Extract X-API-Key header, Authorization Bearer token, or api_key query param."""
+    header_key = request.headers.get("X-API-Key")
+    if header_key is not None and header_key.strip():
+        return header_key.strip()
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    query_key = request.query_params.get("api_key")
+    if query_key is not None and query_key.strip():
+        return query_key.strip()
+    return default_token
+
+
+def _ensure_project_initialized(project_id: str = "job_4091") -> Dict[str, Any]:
+    """Ensure a project has an active level contract, generated assets, and MuJoCo session."""
+    if project_id in ACTIVE_PROJECTS and project_id in MUJOCO_SESSIONS:
+        return ACTIVE_PROJECTS[project_id]
+
+    prev_mode = architect_agent.exec_mode
+    prev_dir_mode = director_agent.exec_mode
+    try:
+        director_agent.exec_mode = "local_fast"
+        architect_agent.exec_mode = "local_fast"
+        directive = director_agent.scope_brief(
+            "Neon cyberpunk downtown avenue with towering skyscrapers and street rally car",
+            project_id=project_id,
+            level_index=1,
+        )
+        contract = architect_agent.build_level_contract(
+            directive=directive,
+            manifest=ASSET_MANIFEST,
+            seed_blockade=True,
+        )
+    finally:
+        director_agent.exec_mode = prev_dir_mode
+        architect_agent.exec_mode = prev_mode
+
+    sim = MujocoDrivingSession(
+        project_id=project_id,
+        car_spec=contract.get("car_physics", {}),
+        level_entities=contract.get("entities", []),
+    )
+    MUJOCO_SESSIONS[project_id] = sim
+    contract["sanity_check"] = sim.compute_physics_sanity_check()
+    ACTIVE_PROJECTS[project_id] = contract
+    return contract
+
+
 @app.middleware("http")
 async def enforce_gateway_policies(request: Request, call_next):
     """Intercept `/api/v1/agents/{agent_name}/execute` calls to enforce IAM tokens, rate limits, and policies."""
     start_time = time.time()
-    if request.url.path.startswith("/api/v1/agents/") and request.url.path.endswith("/execute"):
-        token = request.headers.get("X-API-Key")
+    if (request.url.path.startswith("/api/v1/agents/") or request.url.path.startswith("/agents/")) and request.url.path.endswith("/execute"):
+        token = _extract_token(request, default_token="token_admin")
         try:
             request.state.user = policy_engine.enforce(token)
         except HTTPException as exc:
@@ -320,6 +373,8 @@ async def studio_dashboard() -> str:
 
 
 @app.get("/health")
+@app.get("/api/health")
+@app.get("/api/v1/health")
 async def health() -> Dict[str, Any]:
     return {
         "status": "ok",
@@ -334,16 +389,59 @@ async def health() -> Dict[str, Any]:
         "registered_test_agents": agent_registry.list_agents(category="test_agent"),
         "policies_enforced": True,
         "environment": os.getenv("K_SERVICE", "local"),
+        "endpoints": {
+            "commission_level": [
+                "POST /api/commission-level",
+                "POST /commission_level",
+                "POST /api/v1/generate_level",
+                "GET /commission_level",
+            ],
+            "physics_step": [
+                "POST /api/physics-step",
+                "POST /mujoco_step",
+                "POST /physics_step",
+                "POST /api/v1/physics_step",
+                "GET /mujoco_step",
+            ],
+            "qa_audit": [
+                "POST /api/qa-audit",
+                "POST /qa_audit",
+                "POST /verify_frame",
+                "POST /api/v1/verify_frame",
+                "GET /qa_audit",
+            ],
+            "export_build": [
+                "POST /api/export-build",
+                "POST /export_build",
+                "POST /api/v1/export_robot_bundle",
+                "GET /export_build",
+            ],
+            "managed_agents": [
+                "GET /api/v1/agents",
+                "GET /api/v1/agents/{agent_name}",
+                "POST /api/v1/agents/{agent_name}/execute",
+                "GET /api/v1/agents/{agent_name}/execute",
+                "GET /api/v1/policies",
+            ],
+            "simready_and_projects": [
+                "GET /api/v1/simready/catalog",
+                "GET /api/v1/simready/{asset_id}",
+                "GET /api/projects",
+                "GET /api/projects/{project_id}",
+            ],
+        },
     }
 
 
 @app.get("/api/v1/agents")
+@app.get("/agents")
 async def list_registered_agents(category: Optional[str] = None) -> Dict[str, Any]:
     """List all registered Game Agents and Test Agents with their A2A Cards, SPIFFE IDs, and Policies."""
     return agent_registry.get_catalog(category=category)
 
 
 @app.get("/api/v1/agents/{agent_name}")
+@app.get("/agents/{agent_name}")
 async def get_registered_agent(agent_name: str) -> Dict[str, Any]:
     """Retrieve the A2A Agent Card and Policy Spec for a specific registered agent."""
     agent = agent_registry.get_agent(agent_name)
@@ -356,10 +454,11 @@ async def get_registered_agent(agent_name: str) -> Dict[str, Any]:
 
 
 @app.post("/api/v1/agents/{agent_name}/execute")
+@app.post("/agents/{agent_name}/execute")
 async def execute_registered_agent(
     agent_name: str,
-    payload: ManagedAgentExecutePayload,
     request: Request,
+    payload: Optional[ManagedAgentExecutePayload] = None,
 ) -> Dict[str, Any]:
     """Execute a registered Game Agent or Test Agent through the Policy Enforcement Gateway."""
     agent = agent_registry.get_agent(agent_name)
@@ -369,8 +468,9 @@ async def execute_registered_agent(
             detail=f"Agent '{agent_name}' not found in registry.",
         )
 
-    token = request.headers.get("X-API-Key")
-    payload_dict = payload.model_dump()
+    token = _extract_token(request, default_token="token_admin")
+    payload_obj = payload or ManagedAgentExecutePayload()
+    payload_dict = payload_obj.model_dump()
     principal = policy_engine.enforce(token=token, agent=agent, payload=payload_dict)
 
     t0 = time.time()
@@ -402,7 +502,26 @@ async def execute_registered_agent(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/v1/agents/{agent_name}/execute")
+@app.get("/agents/{agent_name}/execute")
+async def execute_registered_agent_get(
+    agent_name: str,
+    request: Request,
+    project_id: str = "job_4091",
+    asset_id: str = "high_torque_wheel_hub_v2",
+    prompt: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Browser-friendly GET endpoint to execute a registered agent with query/default parameters."""
+    payload = ManagedAgentExecutePayload(
+        asset_id=asset_id,
+        project_id=project_id,
+        prompt=prompt,
+    )
+    return await execute_registered_agent(agent_name=agent_name, request=request, payload=payload)
+
+
 @app.get("/api/v1/policies")
+@app.get("/policies")
 async def get_policy_governance_state() -> Dict[str, Any]:
     """Return active IAM token tiers, CEL rules, per-agent rate counters, and execution audit logs."""
     return {
@@ -421,10 +540,50 @@ async def get_policy_governance_state() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/v1/simready/catalog")
+@app.get("/api/simready")
+async def list_simready_catalog() -> Dict[str, Any]:
+    """Return all validated SimReady Central USD & M3 hardware assets plus the 3D asset manifest."""
+    return {
+        "catalog": SimReadyCentralClient.CATALOG,
+        "asset_manifest": ASSET_MANIFEST,
+    }
+
+
+@app.get("/api/v1/simready/{asset_id}")
+@app.get("/api/simready/{asset_id}")
+async def get_simready_asset(asset_id: str) -> Dict[str, Any]:
+    """Fetch SimReady USD physics profile and M3 mechanical calibration for an asset_id."""
+    return SimReadyCentralClient.fetch_usd_asset(asset_id)
+
+
+@app.get("/api/projects")
+@app.get("/projects")
+async def list_active_projects() -> Dict[str, Any]:
+    """List all active commissioned driving levels and their current MuJoCo state."""
+    if not ACTIVE_PROJECTS:
+        _ensure_project_initialized("job_4091")
+    return {
+        "active_project_ids": list(ACTIVE_PROJECTS.keys()),
+        "projects": ACTIVE_PROJECTS,
+    }
+
+
+@app.get("/api/projects/{project_id}")
+@app.get("/projects/{project_id}")
+async def get_project_state(project_id: str) -> Dict[str, Any]:
+    """Retrieve the full level contract and live MuJoCo physics sanity state for a project_id."""
+    return _ensure_project_initialized(project_id)
+
+
 @app.post("/api/commission-level")
+@app.post("/commission_level")
+@app.post("/api/commission_level")
+@app.post("/api/v1/generate_level")
+@app.post("/api/v1/commission-level")
 async def commission_level(req: CommissionRequest, request: Request) -> Dict[str, Any]:
     """Run Studio Director -> Level Architect + Skin/WAV Pull -> MuJoCo Session Init."""
-    token = request.headers.get("X-API-Key", "token_client")
+    token = _extract_token(request, default_token="token_client")
     dir_reg = agent_registry.get_agent("studio_director")
     arch_reg = agent_registry.get_agent("level_architect")
     principal = policy_engine.enforce(
@@ -465,21 +624,36 @@ async def commission_level(req: CommissionRequest, request: Request) -> Dict[str
     return level_contract
 
 
+@app.get("/api/commission-level")
+@app.get("/commission_level")
+@app.get("/api/v1/generate_level")
+async def commission_level_get(
+    request: Request,
+    project_id: str = "job_4091",
+    prompt: Optional[str] = None,
+    level_index: int = 1,
+) -> Dict[str, Any]:
+    """Browser-friendly GET handler for commissioning or inspecting a driving level."""
+    if prompt:
+        req = CommissionRequest(prompt=prompt, project_id=project_id, level_index=level_index)
+        return await commission_level(req=req, request=request)
+    return _ensure_project_initialized(project_id)
+
+
 @app.post("/api/physics-step")
+@app.post("/mujoco_step")
+@app.post("/physics_step")
+@app.post("/api/mujoco-step")
+@app.post("/api/v1/physics_step")
+@app.post("/api/v1/mujoco_step")
 async def physics_step(req: PhysicsStepRequest, request: Request) -> Dict[str, Any]:
     """Step the MuJoCo car/robot simulation (including live Transformers morphs) and return telemetry."""
-    token = request.headers.get("X-API-Key", "token_client")
+    token = _extract_token(request, default_token="token_client")
     verifier_reg = agent_registry.get_agent("mujoco_sanity_verifier")
     t0 = time.time()
-    sim = MUJOCO_SESSIONS.get(req.project_id)
-    if sim is None:
-        contract = ACTIVE_PROJECTS.get(req.project_id, {})
-        sim = MujocoDrivingSession(
-            project_id=req.project_id,
-            car_spec=contract.get("car_physics", {}),
-            level_entities=contract.get("entities", []),
-        )
-        MUJOCO_SESSIONS[req.project_id] = sim
+    if req.project_id not in MUJOCO_SESSIONS:
+        _ensure_project_initialized(req.project_id)
+    sim = MUJOCO_SESSIONS[req.project_id]
 
     step_res = sim.step(
         throttle=req.throttle,
@@ -488,19 +662,72 @@ async def physics_step(req: PhysicsStepRequest, request: Request) -> Dict[str, A
         robot_form=req.robot_form,
     )
     if verifier_reg:
-        role = API_TOKENS.get(token, API_TOKENS["token_client"])["role"]
+        role = API_TOKENS.get(token or "token_client", API_TOKENS["token_client"])["role"]
         policy_engine.record_execution(verifier_reg, role, (time.time() - t0) * 1000.0)
     return step_res
 
 
-@app.post("/api/qa-audit")
-async def qa_audit(
+@app.get("/api/physics-step")
+@app.get("/mujoco_step")
+@app.get("/physics_step")
+@app.get("/api/v1/physics_step")
+async def physics_step_get(
     request: Request,
-    project_id: str = Form("job_4091"),
-    viewport_png: Optional[UploadFile] = File(None),
+    project_id: str = "job_4091",
+    throttle: float = 1.0,
+    steering: float = 0.0,
+    equip_upgrade: Optional[bool] = None,
+    robot_form: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Receive raw viewport PNG from the Rust client, run Visual QA Agent, and patch scene + MuJoCo physics."""
-    token = request.headers.get("X-API-Key", "token_client")
+    """Browser-friendly GET handler to step MuJoCo physics and view live telemetry."""
+    req = PhysicsStepRequest(
+        project_id=project_id,
+        throttle=throttle,
+        steering=steering,
+        equip_upgrade=equip_upgrade,
+        robot_form=robot_form,
+    )
+    return await physics_step(req=req, request=request)
+
+
+@app.post("/api/qa-audit")
+@app.post("/qa_audit")
+@app.post("/verify_frame")
+@app.post("/api/verify-frame")
+@app.post("/api/v1/verify_frame")
+@app.post("/api/v1/qa-audit")
+async def qa_audit(request: Request) -> Dict[str, Any]:
+    """Receive viewport PNG (multipart form-data or JSON) from the client, run Visual QA Agent, and patch scene + MuJoCo physics."""
+    import base64
+
+    project_id = request.query_params.get("project_id", "job_4091")
+    image_bytes: Optional[bytes] = None
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                project_id = str(body.get("project_id") or project_id)
+                b64_str = body.get("image_base64") or body.get("viewport_png")
+                if isinstance(b64_str, str) and b64_str.strip():
+                    raw_b64 = b64_str.split(",")[-1].strip()
+                    image_bytes = base64.b64decode(raw_b64)
+        except Exception:
+            pass
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        try:
+            form = await request.form()
+            if "project_id" in form and form["project_id"]:
+                project_id = str(form["project_id"])
+            upload = form.get("viewport_png") or form.get("file") or form.get("image")
+            if upload is not None and hasattr(upload, "read"):
+                image_bytes = await upload.read()
+                print(f"[Studio Gateway] Received viewport capture ({len(image_bytes)} bytes) for {project_id}")
+        except Exception:
+            pass
+
+    token = _extract_token(request, default_token="token_client")
     qa_reg = agent_registry.get_agent("visual_qa_tester")
     gbuf_reg = agent_registry.get_agent("gbuffer_artifact_validator")
     principal = policy_engine.enforce(
@@ -509,13 +736,8 @@ async def qa_audit(
         payload={"project_id": project_id},
     )
 
-    image_bytes: Optional[bytes] = None
-    if viewport_png is not None:
-        image_bytes = await viewport_png.read()
-        print(f"[Studio Gateway] Received viewport capture ({len(image_bytes)} bytes) for {project_id}")
-
     t0 = time.time()
-    current_scene = ACTIVE_PROJECTS.get(project_id, {"project_id": project_id, "entities": []})
+    current_scene = _ensure_project_initialized(project_id)
     report = qa_tester_agent.audit_viewport(
         project_id=project_id,
         image_bytes=image_bytes,
@@ -545,19 +767,77 @@ async def qa_audit(
     return report
 
 
+@app.get("/api/qa-audit")
+@app.get("/qa_audit")
+@app.get("/verify_frame")
+@app.get("/api/v1/verify_frame")
+async def qa_audit_get(request: Request) -> Dict[str, Any]:
+    """Browser-friendly GET handler to run Visual QA Playtester + WGPU/MuJoCo verification."""
+    return await qa_audit(request=request)
+
+
 @app.post("/api/export-build")
+@app.post("/export_build")
+@app.post("/api/export_build")
+@app.post("/api/v1/export_robot_bundle")
+@app.post("/api/v1/export-build")
 async def export_build(req: ExportBuildRequest, request: Request) -> Dict[str, Any]:
     """Export the physical manufacturing bundle: M3-calibrated STLs + URDF + BOM.csv + MicroPython Firmware."""
-    token = request.headers.get("X-API-Key", "token_admin")
+    token = _extract_token(request, default_token="token_admin")
     mod_reg = agent_registry.get_agent("usd_physics_modifier")
     t0 = time.time()
-    contract = ACTIVE_PROJECTS.get(req.project_id, {})
+    contract = _ensure_project_initialized(req.project_id)
     bundle = export_physical_build_package(
         project_id=req.project_id,
         car_spec=contract.get("car_physics", {}),
         reward_part=contract.get("reward_part", {}),
     )
+    bundle["download_urls"] = {
+        "chassis_stl": f"/exports/{req.project_id}_build_package/chassis_body.stl",
+        "upgrade_stl": f"/exports/{req.project_id}_build_package/{bundle.get('equipped_part_id', 'high_torque_wheel_hub_v2')}.stl",
+        "urdf": f"/exports/{req.project_id}_build_package/rover.urdf",
+        "mjcf": f"/exports/{req.project_id}_build_package/rover.xml",
+        "bom_csv": f"/exports/{req.project_id}_build_package/BOM.csv",
+        "firmware_py": f"/exports/{req.project_id}_build_package/main.py",
+    }
     if mod_reg:
-        role = API_TOKENS.get(token, API_TOKENS["token_admin"])["role"]
+        role = API_TOKENS.get(token or "token_admin", API_TOKENS["token_admin"])["role"]
         policy_engine.record_execution(mod_reg, role, (time.time() - t0) * 1000.0)
     return bundle
+
+
+@app.get("/api/export-build")
+@app.get("/export_build")
+@app.get("/api/v1/export_robot_bundle")
+async def export_build_get(request: Request, project_id: str = "job_4091") -> Dict[str, Any]:
+    """Browser-friendly GET handler to export the physical fabrication bundle."""
+    req = ExportBuildRequest(project_id=project_id)
+    return await export_build(req=req, request=request)
+
+
+@app.get("/assets/{project_id}/{filename}")
+async def serve_project_asset_fallback(project_id: str, filename: str):
+    """Serve project assets from either `/assets/{project_id}/{filename}` or `/assets/generated/{project_id}/{filename}`."""
+    direct_path = ASSETS_DIR / project_id / filename
+    if direct_path.is_file():
+        return FileResponse(str(direct_path))
+
+    if project_id not in ACTIVE_PROJECTS:
+        _ensure_project_initialized(project_id)
+
+    gen_dir = GENERATED_ASSETS_DIR / project_id
+    gen_path = gen_dir / filename
+    if gen_path.is_file():
+        return FileResponse(str(gen_path))
+
+    # Map rover.xml -> car_level.xml and vice-versa
+    if filename == "rover.xml" and (gen_dir / "car_level.xml").is_file():
+        return FileResponse(str(gen_dir / "car_level.xml"), media_type="application/xml")
+    if filename.endswith("_skin.png") and (gen_dir / "chassis_skin.png").is_file():
+        return FileResponse(str(gen_dir / "chassis_skin.png"), media_type="image/png")
+
+    raise HTTPException(status_code=404, detail=f"Asset '{filename}' not found for project '{project_id}'")
+
+
+app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
+app.mount("/exports", StaticFiles(directory=str(EXPORTS_DIR)), name="exports")

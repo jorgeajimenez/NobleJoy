@@ -179,13 +179,15 @@ class LevelArchitectAgent:
         extracted_sandbox_files: List[str] = []
         parsed_entities: List[Dict[str, Any]] = []
         managed_env_id: str = ""
+        managed_interaction_id: str = ""
 
         from concurrent.futures import ThreadPoolExecutor
 
-        def _run_managed_architect() -> tuple[List[Dict[str, Any]], List[str], str]:
+        def _run_managed_architect() -> tuple[List[Dict[str, Any]], List[str], str, str]:
             local_entities: List[Dict[str, Any]] = []
             local_files: List[str] = []
             local_env_id = ""
+            local_interaction_id = ""
             if (
                 self.exec_mode != "local_fast"
                 and self.api_key
@@ -199,16 +201,22 @@ class LevelArchitectAgent:
                         self.exec_mode == "auto" and self.use_managed_agent
                     )
                     if use_remote:
+                        sandbox_prompt = (
+                            prompt
+                            + "\nAdditionally, if running inside a Managed Agent remote workspace, "
+                            "write '/workspace/level_contract.json' and return the JSON object with key 'entities'."
+                        )
                         interaction = client.interactions.create(
                             agent=self.managed_agent_id,
                             agent_config={
                                 "type": self.managed_agent_type,
                                 "model": self.model_id,
                             },
-                            input=prompt,
+                            input=sandbox_prompt,
                             environment="remote",
                         )
                         local_env_id = getattr(interaction, "environment_id", None) or ""
+                        local_interaction_id = getattr(interaction, "id", None) or ""
                         local_files = pull_managed_agent_workspace(
                             environment_id=local_env_id,
                             project_id=project_id,
@@ -220,6 +228,7 @@ class LevelArchitectAgent:
                             input=prompt,
                             generation_config={"thinking_level": "low"},
                         )
+                        local_interaction_id = getattr(interaction, "id", None) or ""
                     raw = (getattr(interaction, "output_text", None) or "").strip()
                     if "```" in raw:
                         raw = raw.split("```")[1].removeprefix("json").strip()
@@ -228,7 +237,7 @@ class LevelArchitectAgent:
                         local_entities = parsed["entities"]
                 except Exception as exc:
                     print(f"[ArchitectAgent] Fallback triggered ({exc})")
-            return local_entities, local_files, local_env_id
+            return local_entities, local_files, local_env_id, local_interaction_id
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             arch_future = pool.submit(_run_managed_architect)
@@ -239,7 +248,7 @@ class LevelArchitectAgent:
                 "chassis_skin.png",
                 self.api_key,
             )
-            parsed_entities, extracted_sandbox_files, managed_env_id = arch_future.result()
+            parsed_entities, extracted_sandbox_files, managed_env_id, managed_interaction_id = arch_future.result()
             skin_info = skin_future.result()
 
         if not parsed_entities:
@@ -291,6 +300,7 @@ class LevelArchitectAgent:
             "urdf_url": f"/assets/generated/{project_id}/rover.urdf",
             "stl_url": f"/assets/generated/{project_id}/{part_id}.stl",
             "managed_environment_id": managed_env_id,
+            "managed_interaction_id": managed_interaction_id,
             "sandbox_files": extracted_sandbox_files + [skin_info["local_path"], music_info["local_path"], stl_path],
             "entities": parsed_entities,
         }
